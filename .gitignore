@@ -1,0 +1,51 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+
+# ── Environment / secrets ──────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Build output ───────────────────────────────────────────────────────────────
+dist/
+frontend/dist/
+build/
+*.js.map
+
+# ── Database & runtime data ────────────────────────────────────────────────────
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# ── Agent workspaces (generated per-session contract code) ────────────────────
+workspaces/
+
+# ── Debug / scratch scripts (root-level .mts files used during development) ───
+*.mts
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── TypeScript cache ──────────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ── Test artifacts ────────────────────────────────────────────────────────────
+coverage/
+.vitest/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+.claude/

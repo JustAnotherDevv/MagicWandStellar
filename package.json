@@ -1,0 +1,46 @@
+{
+  "name": "magicwand",
+  "version": "1.0.0",
+  "description": "Agentic Stellar App Store & App Building Agent",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "setup:docs": "tsx scripts/download-docs.ts",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "vitest run tests/e2e",
+    "test:watch": "vitest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
+    "@stellar/mpp": "^0.4.0",
+    "@stellar/stellar-sdk": "^15.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.19",
+    "@x402/core": "^2.9.0",
+    "@x402/stellar": "^2.9.0",
+    "axios": "^1.15.0",
+    "better-sqlite3": "^12.8.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.1",
+    "express": "^5.2.1",
+    "mppx": "^0.5.12",
+    "openai": "^6.34.0",
+    "viem": "^2.47.12",
+    "x402-stellar": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
+  }
+}
