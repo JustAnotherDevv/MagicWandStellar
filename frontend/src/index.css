@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --scrollbar-track: #0e0e10;
+    --scrollbar-thumb: #2a2a2e;
+    --scrollbar-thumb-hover: #3a3a3e;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+  *::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background: #080809;
+    color: #d0d0d2;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+}
+
+@layer components {
+  .panel-border { @apply border border-white/[0.06]; }
+  .panel-bg     { @apply bg-bg-panel; }
+  .surface-bg   { @apply bg-bg-surface; }
+  .elevated-bg  { @apply bg-bg-elevated; }
+
+  .accent-text  { @apply text-accent; }
+  .muted-text   { @apply text-ink-muted; }
+
+  .btn-ghost {
+    @apply flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium
+           text-ink-muted hover:text-ink hover:bg-bg-hover
+           transition-colors duration-100 cursor-pointer;
+  }
+
+  .btn-accent {
+    @apply flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium
+           bg-accent text-white hover:bg-accent-bright
+           transition-colors duration-100 cursor-pointer shadow-accent-glow/50;
+  }
+
+  .btn-outline {
+    @apply flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium
+           border border-white/10 text-ink-muted hover:text-ink hover:border-white/20
+           transition-colors duration-100 cursor-pointer;
+  }
+
+  .input-base {
+    @apply w-full bg-bg-elevated border border-white/[0.08] rounded px-3 py-2
+           text-sm text-ink placeholder:text-ink-dim
+           focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20
+           transition-colors duration-100;
+  }
+
+  .panel-tab {
+    @apply flex items-center gap-1.5 px-3 h-8 text-xs font-medium text-ink-muted
+           border-b-2 border-transparent hover:text-ink cursor-pointer
+           transition-colors duration-100 whitespace-nowrap;
+  }
+
+  .panel-tab-active {
+    @apply text-ink border-b-2 border-accent;
+  }
+
+  /* Streaming cursor blink */
+  .cursor-blink::after {
+    content: '▋';
+    @apply text-accent animate-pulse ml-0.5;
+  }
+
+  /* Code block in markdown */
+  .prose-dark code {
+    @apply bg-bg-elevated px-1.5 py-0.5 rounded text-xs font-mono text-accent;
+  }
+  .prose-dark pre {
+    @apply bg-bg-elevated border border-white/[0.06] rounded-lg p-4 overflow-x-auto;
+  }
+  .prose-dark pre code {
+    @apply bg-transparent p-0;
+  }
+  .prose-dark h1, .prose-dark h2, .prose-dark h3 {
+    @apply text-ink font-semibold;
+  }
+  .prose-dark h1 { @apply text-lg mt-4 mb-2; }
+  .prose-dark h2 { @apply text-base mt-3 mb-1.5; }
+  .prose-dark h3 { @apply text-sm mt-2 mb-1; }
+  .prose-dark p  { @apply text-sm text-ink-muted leading-relaxed mb-2; }
+  .prose-dark ul { @apply text-sm text-ink-muted pl-4 mb-2 list-disc space-y-1; }
+  .prose-dark ol { @apply text-sm text-ink-muted pl-4 mb-2 list-decimal space-y-1; }
+  .prose-dark li { @apply leading-relaxed; }
+  .prose-dark blockquote {
+    @apply border-l-2 border-accent/40 pl-3 text-ink-muted italic;
+  }
+  .prose-dark hr { @apply border-white/[0.06] my-4; }
+  .prose-dark a  { @apply text-accent hover:text-accent-bright underline; }
+  .prose-dark strong { @apply text-ink font-semibold; }
+  .prose-dark table { @apply w-full text-sm; }
+  .prose-dark th {
+    @apply text-left text-xs font-medium text-ink-muted uppercase tracking-wider
+           border-b border-white/[0.06] pb-2;
+  }
+  .prose-dark td {
+    @apply py-1.5 border-b border-white/[0.04] text-ink-muted;
+  }
+}
+
+/* Resizable panel handle */
+[data-panel-resize-handle-id] {
+  width: 1px !important;
+  background: rgba(255,255,255,0.06) !important;
+  transition: background 0.15s;
+}
+[data-panel-resize-handle-id]:hover,
+[data-panel-resize-handle-id][data-resize-handle-active] {
+  background: rgba(240,115,24,0.5) !important;
+  width: 2px !important;
+}
+
+/* Monaco editor overrides */
+.monaco-editor .margin { background: transparent !important; }
+.monaco-editor, .monaco-editor-background,
+.monaco-editor .inputarea.ime-input {
+  background-color: transparent !important;
+}
