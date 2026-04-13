@@ -1,10 +1,10 @@
 import { useStore } from '@/store'
 import { shortKey, networkBadgeClass } from '@/lib/utils'
-import { disconnectWallet } from '@/lib/stellar'
+import { connectWallet, disconnectWallet } from '@/lib/stellar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
-import { LogOut, Activity } from 'lucide-react'
+import { LogOut, Activity, Wallet } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export function TopBar() {
@@ -14,6 +14,15 @@ export function TopBar() {
   const shellView = useStore((s) => s.shellView)
   const setShellView = useStore((s) => s.setShellView)
   const setShowLanding = useStore((s) => s.setShowLanding)
+
+  const handleConnect = async () => {
+    try {
+      const result = await connectWallet()
+      setWallet({ publicKey: result.publicKey, network: result.network, isConnected: true })
+    } catch {
+      // user rejected or Freighter not installed — ignore
+    }
+  }
 
   const handleDisconnect = () => {
     disconnectWallet()
@@ -45,7 +54,7 @@ export function TopBar() {
               : 'text-ink-muted hover:text-ink bg-transparent',
           )}
         >
-          Current Build
+          Build
         </button>
         <button
           onClick={() => setShellView('apps')}
@@ -80,6 +89,14 @@ export function TopBar() {
         <Badge variant={wallet.network === 'mainnet' ? 'success' : 'warning'} className="capitalize">
           {wallet.network}
         </Badge>
+      )}
+
+      {/* Connect wallet button when not connected */}
+      {!wallet.isConnected && (
+        <Button variant="outline" size="sm" onClick={handleConnect} className="text-xs gap-1.5 h-7 px-3">
+          <Wallet size={12} />
+          Connect Wallet
+        </Button>
       )}
 
       {/* Wallet */}

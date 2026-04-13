@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { spawn } from 'child_process';
 import { db } from '../index.js';
+import { RPC_URLS, FRIENDBOT_URLS } from '../config/index.js';
 
 export const workspaceRouter = Router();
 
@@ -373,16 +374,22 @@ workspaceRouter.post('/:projectId/deploy', async (req: Request, res: Response) =
       const activeSession = sessionId
         ? db.getActiveSession(sessionId)
         : db.loadActiveSessions().find((s) => s.project_id === projectId);
-      db.saveContract({
-        contractId,
-        projectId,
-        sessionId: activeSession?.id ?? `manual_${Date.now()}`,
-        userId: project.user_id,
-        network: targetNetwork as 'testnet' | 'mainnet' | 'futurenet' | 'local',
-        wasmPath,
-        sourceAccount: source,
-        contractAlias: contractAlias?.trim() || undefined,
-      });
+      if (activeSession?.id) {
+        try {
+          db.saveContract({
+            contractId,
+            projectId,
+            sessionId: activeSession.id,
+            userId: project.user_id,
+            network: targetNetwork as 'testnet' | 'mainnet' | 'futurenet' | 'local',
+            wasmPath,
+            sourceAccount: source,
+            contractAlias: contractAlias?.trim() || undefined,
+          });
+        } catch (e) {
+          console.warn('[deploy] saveContract failed (non-fatal):', (e as Error).message);
+        }
+      }
     }
   }
 
@@ -494,4 +501,45 @@ workspaceRouter.get('/:projectId/runtime/*runtimePath', async (req: Request, res
     return;
   }
   res.sendFile(full);
+});
+
+// POST /workspace/:projectId/rpc-proxy  ─ forwards JSON-RPC to the project's Soroban RPC
+// Allows browser UIs (iframes) to call the RPC without hitting CORS restrictions.
+workspaceRouter.post('/:projectId/rpc-proxy', async (req: Request, res: Response) => {
+  const project = db.getProject(req.params['projectId'] as string);
+  if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+
+  const rpcUrl = RPC_URLS[project.network] ?? RPC_URLS['testnet'];
+  try {
+    const upstream = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+    });
+    const data = await upstream.json();
+    res.json(data);
+  } catch (e) {
+    res.status(502).json({ error: `RPC proxy error: ${(e as Error).message}` });
+  }
+});
+
+// GET /workspace/:projectId/fund/:address  ─ funds an address via network friendbot
+workspaceRouter.get('/:projectId/fund/:address', async (req: Request, res: Response) => {
+  const project = db.getProject(req.params['projectId'] as string);
+  if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+
+  const friendbotUrl = FRIENDBOT_URLS[project.network];
+  if (!friendbotUrl) {
+    res.status(400).json({ error: `No friendbot available for network: ${project.network}` });
+    return;
+  }
+
+  const address = req.params['address'] as string;
+  try {
+    const resp = await fetch(`${friendbotUrl}?addr=${encodeURIComponent(address)}`);
+    const data = await resp.json();
+    res.status(resp.ok ? 200 : 400).json(data);
+  } catch (e) {
+    res.status(502).json({ error: `Friendbot error: ${(e as Error).message}` });
+  }
 });

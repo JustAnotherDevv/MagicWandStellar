@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels'
 import { useStore, type PanelView } from '@/store'
 import { api } from '@/lib/api'
@@ -15,9 +15,9 @@ import { LandingPage } from '@/components/LandingPage'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
-import { MessageSquare, FileText, Code2, FlaskConical, Terminal, Package, LayoutDashboard, ChevronLeft, ChevronRight, ThumbsUp, ThumbsDown } from 'lucide-react'
-import type { Project } from '@/types'
+import { cn, shortKey } from '@/lib/utils'
+import { MessageSquare, FileText, Code2, FlaskConical, Terminal, Package, LayoutDashboard, ChevronLeft, ChevronRight, ThumbsUp, ThumbsDown, Copy, ExternalLink, Check } from 'lucide-react'
+import type { Project, Contract } from '@/types'
 
 const TABS: { id: PanelView; label: string; Icon: React.ElementType }[] = [
   { id: 'chat',     label: 'Chat',     Icon: MessageSquare },
@@ -216,6 +216,12 @@ function AppsStoreView({ onOpenBuild }: { onOpenBuild: (projectId: string) => vo
   const [runtimeApp, setRuntimeApp] = useState<Project | null>(null)
   const [runtimeFallbackUrl, setRuntimeFallbackUrl] = useState<string | null>(null)
   const [runtimeUnavailable, setRuntimeUnavailable] = useState(false)
+  const [runtimeContracts, setRuntimeContracts] = useState<Contract[]>([])
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const wallet = useStore((s) => s.wallet)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  // Mutable ref so the sign-bridge effect ([] deps) always reads the current value
+  const walletKeyRef = useRef<string | null>(null)
 
   const published = useMemo(
     () =>
@@ -307,6 +313,71 @@ function AppsStoreView({ onOpenBuild }: { onOpenBuild: (projectId: string) => vo
       })
     return () => { active = false }
   }, [runtimeApp?.id, runtimeApp?.appRuntimeUrl])
+
+  // Load contracts when runtime modal opens
+  useEffect(() => {
+    if (!runtimeApp) { setRuntimeContracts([]); return }
+    api.getContracts(runtimeApp.id)
+      .then(setRuntimeContracts)
+      .catch(() => setRuntimeContracts([]))
+  }, [runtimeApp?.id])
+
+  const copyId = useCallback((id: string) => {
+    navigator.clipboard.writeText(id).then(() => {
+      setCopiedId(id)
+      setTimeout(() => setCopiedId(null), 2000)
+    })
+  }, [])
+
+  // Keep ref in sync for use inside the [] effect below
+  useEffect(() => { walletKeyRef.current = wallet.publicKey }, [wallet.publicKey])
+
+  // Push wallet state to iframe whenever the connected address changes (or app opens)
+  useEffect(() => {
+    if (!runtimeApp || !iframeRef.current?.contentWindow) return
+    iframeRef.current.contentWindow.postMessage(
+      { type: 'wallet-state', address: wallet.publicKey },
+      '*',
+    )
+  }, [wallet.publicKey, runtimeApp?.id])
+
+  // Signing bridge — app iframes post sign-request here, platform calls Freighter and replies
+  useEffect(() => {
+    const handler = async (event: MessageEvent) => {
+      if (!iframeRef.current?.contentWindow) return
+      if (event.source !== iframeRef.current.contentWindow) return
+      const data = event.data as { type?: string; requestId?: string; xdr?: string; networkPassphrase?: string }
+      if (!data || typeof data.type !== 'string') return
+
+      if (data.type === 'get-wallet-state') {
+        iframeRef.current.contentWindow.postMessage(
+          { type: 'wallet-state', address: walletKeyRef.current },
+          '*',
+        )
+        return
+      }
+
+      if (data.type === 'sign-request') {
+        const { requestId, xdr, networkPassphrase } = data
+        try {
+          const f = await import('@stellar/freighter-api')
+          const sigResult = await f.signTransaction(xdr!, { networkPassphrase: networkPassphrase! })
+          if (sigResult.error) throw new Error(sigResult.error)
+          iframeRef.current?.contentWindow?.postMessage(
+            { type: 'sign-result', requestId, signedTxXdr: sigResult.signedTxXdr },
+            '*',
+          )
+        } catch (e) {
+          iframeRef.current?.contentWindow?.postMessage(
+            { type: 'sign-error', requestId, error: (e as Error).message || 'Signing failed' },
+            '*',
+          )
+        }
+      }
+    }
+    window.addEventListener('message', handler)
+    return () => window.removeEventListener('message', handler)
+  }, [])
 
   return (
     <div className="flex-1 min-h-0 overflow-auto bg-[radial-gradient(circle_at_top,#2f2135_0%,#141019_44%,#0d0a13_100%)]">
@@ -528,16 +599,24 @@ function AppsStoreView({ onOpenBuild }: { onOpenBuild: (projectId: string) => vo
       </Dialog>
 
       <Dialog open={!!runtimeApp} onClose={() => setRuntimeApp(null)}>
-        <DialogContent title={runtimeApp?.appName || runtimeApp?.name || 'App Runtime'} onClose={() => setRuntimeApp(null)} className="max-w-6xl min-h-[72vh]">
+        <DialogContent title={runtimeApp?.appName || runtimeApp?.name || 'App Runtime'} onClose={() => setRuntimeApp(null)} className="w-[96vw] max-w-[96vw] h-[92vh] max-h-[92vh]">
           {runtimeApp && (
-            <div className="flex gap-3 min-h-[62vh]">
+            <div className="flex gap-4 h-full">
+              {/* ── iframe ── */}
               <div className="flex-1 rounded-2xl border border-white/10 bg-bg-elevated overflow-hidden">
                 {(runtimeApp.appRuntimeUrl || runtimeFallbackUrl) ? (
                   <iframe
+                    ref={iframeRef}
                     src={runtimeApp.appRuntimeUrl || runtimeFallbackUrl || undefined}
                     title={runtimeApp.appName || runtimeApp.name}
-                    className="w-full h-full min-h-[62vh]"
+                    className="w-full h-full"
                     sandbox="allow-forms allow-modals allow-popups allow-scripts allow-same-origin allow-downloads"
+                    onLoad={() => {
+                      iframeRef.current?.contentWindow?.postMessage(
+                        { type: 'wallet-state', address: walletKeyRef.current },
+                        '*',
+                      )
+                    }}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-sm text-ink-muted p-6 text-center">
@@ -547,19 +626,140 @@ function AppsStoreView({ onOpenBuild }: { onOpenBuild: (projectId: string) => vo
                   </div>
                 )}
               </div>
-              <aside className="w-48 shrink-0 rounded-2xl border border-white/10 bg-bg-elevated p-3 space-y-3">
-                <p className="text-[11px] uppercase tracking-widest text-ink-muted">Reactions</p>
-                <button onClick={() => react(runtimeApp.id, 'like')} className="w-full inline-flex items-center justify-between rounded-xl border border-white/10 px-3 py-2 text-sm text-ink-muted hover:text-ink">
-                  <span className="inline-flex items-center gap-2"><ThumbsUp size={14} /> Like</span>
-                  <span>{runtimeApp.appLikeCount ?? 0}</span>
-                </button>
-                <button onClick={() => react(runtimeApp.id, 'dislike')} className="w-full inline-flex items-center justify-between rounded-xl border border-white/10 px-3 py-2 text-sm text-ink-muted hover:text-ink">
-                  <span className="inline-flex items-center gap-2"><ThumbsDown size={14} /> Dislike</span>
-                  <span>{runtimeApp.appDislikeCount ?? 0}</span>
-                </button>
+
+              {/* ── sidebar ── */}
+              <aside className="w-72 shrink-0 flex flex-col gap-3 overflow-y-auto">
+
+                {/* App identity */}
+                <div className="rounded-2xl border border-white/10 bg-bg-elevated p-4 space-y-2">
+                  <div className="flex items-center gap-3">
+                    {runtimeApp.appLogoUrl ? (
+                      <img src={runtimeApp.appLogoUrl} alt="" className="w-10 h-10 rounded-xl object-cover border border-white/20 shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-xl bg-accent/20 border border-accent/30 shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-ink truncate">{runtimeApp.appName || runtimeApp.name}</p>
+                      <p className="text-[11px] text-ink-muted capitalize">{runtimeApp.network} network</p>
+                    </div>
+                  </div>
+                  {runtimeApp.appDescription && (
+                    <p className="text-[12px] text-ink-muted leading-relaxed">{runtimeApp.appDescription}</p>
+                  )}
+                  {runtimeApp.appTags?.trim() && (
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {runtimeApp.appTags.split(',').map((t) => t.trim()).filter(Boolean).map((tag) => (
+                        <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.08] text-ink-muted border border-white/10">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Reactions */}
+                <div className="rounded-2xl border border-white/10 bg-bg-elevated p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-ink-muted mb-3">Reactions</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => react(runtimeApp.id, 'like')}
+                      className="flex flex-col items-center gap-1 rounded-xl border border-white/10 py-3 text-ink-muted hover:text-green-400 hover:border-green-400/30 hover:bg-green-400/5 transition-colors"
+                    >
+                      <ThumbsUp size={18} />
+                      <span className="text-sm font-bold">{runtimeApp.appLikeCount ?? 0}</span>
+                      <span className="text-[10px]">Like</span>
+                    </button>
+                    <button
+                      onClick={() => react(runtimeApp.id, 'dislike')}
+                      className="flex flex-col items-center gap-1 rounded-xl border border-white/10 py-3 text-ink-muted hover:text-red-400 hover:border-red-400/30 hover:bg-red-400/5 transition-colors"
+                    >
+                      <ThumbsDown size={18} />
+                      <span className="text-sm font-bold">{runtimeApp.appDislikeCount ?? 0}</span>
+                      <span className="text-[10px]">Dislike</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Creator */}
+                <div className="rounded-2xl border border-white/10 bg-bg-elevated p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-ink-muted mb-3">Creator</p>
+                  <button
+                    onClick={() => copyId(runtimeApp.userId)}
+                    className="w-full flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-bg-panel px-3 py-2 text-left hover:border-white/20 transition-colors group"
+                  >
+                    <span className="font-mono text-[11px] text-ink-muted group-hover:text-ink truncate">
+                      {shortKey(runtimeApp.userId)}
+                    </span>
+                    {copiedId === runtimeApp.userId
+                      ? <Check size={12} className="text-green-400 shrink-0" />
+                      : <Copy size={12} className="text-ink-muted shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    }
+                  </button>
+                  {runtimeApp.network !== 'local' && (
+                    <a
+                      href={`https://stellar.expert/explorer/${runtimeApp.network === 'mainnet' ? 'public' : runtimeApp.network}/account/${runtimeApp.userId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 w-full flex items-center justify-center gap-1.5 rounded-xl border border-white/10 py-1.5 text-[11px] text-ink-muted hover:text-ink hover:border-white/20 transition-colors"
+                    >
+                      <ExternalLink size={11} /> View on Explorer
+                    </a>
+                  )}
+                </div>
+
+                {/* Contracts */}
+                {runtimeContracts.length > 0 && (
+                  <div className="rounded-2xl border border-white/10 bg-bg-elevated p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-ink-muted mb-3">
+                      Contracts ({runtimeContracts.length})
+                    </p>
+                    <div className="space-y-2">
+                      {runtimeContracts.map((c) => {
+                        const explorerBase = c.network === 'mainnet'
+                          ? 'https://stellar.expert/explorer/public'
+                          : c.network === 'testnet'
+                          ? 'https://stellar.expert/explorer/testnet'
+                          : null
+                        return (
+                          <div key={c.id} className="rounded-xl border border-white/10 bg-bg-panel p-3 space-y-2">
+                            {c.name && (
+                              <p className="text-[11px] font-semibold text-ink">{c.name}</p>
+                            )}
+                            <button
+                              onClick={() => copyId(c.contractId)}
+                              className="w-full flex items-center justify-between gap-2 rounded-lg border border-white/10 px-2.5 py-1.5 text-left hover:border-white/20 transition-colors group"
+                            >
+                              <span className="font-mono text-[10px] text-ink-muted group-hover:text-ink truncate">
+                                {c.contractId.slice(0, 6)}…{c.contractId.slice(-6)}
+                              </span>
+                              {copiedId === c.contractId
+                                ? <Check size={11} className="text-green-400 shrink-0" />
+                                : <Copy size={11} className="text-ink-muted shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              }
+                            </button>
+                            {explorerBase ? (
+                              <a
+                                href={`${explorerBase}/contract/${c.contractId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-accent/25 py-1.5 text-[10px] text-accent/80 hover:text-accent hover:border-accent/40 transition-colors"
+                              >
+                                <ExternalLink size={10} /> Open on Explorer
+                              </a>
+                            ) : (
+                              <p className="text-[10px] text-ink-muted text-center py-0.5">Local network · no public explorer</p>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Open Build */}
                 <button
                   onClick={() => onOpenBuild(runtimeApp.id)}
-                  className="w-full rounded-xl py-2 text-[12px] font-semibold text-[#25170f] bg-gradient-to-b from-[#ffcf93] to-[#dd9e56]"
+                  className="w-full rounded-xl py-2.5 text-[12px] font-semibold text-[#25170f] bg-gradient-to-b from-[#ffcf93] to-[#dd9e56] shadow-[0_2px_0_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.4)]"
                 >
                   Open Build
                 </button>
