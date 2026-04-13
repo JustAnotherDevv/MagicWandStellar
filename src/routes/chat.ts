@@ -14,6 +14,28 @@ function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string, data?: unknown): voi
   console.log(`[${ts}][${level}][chat] ${msg}${extra}`);
 }
 
+function isImplementationIntent(message: string): boolean {
+  const m = message.toLowerCase();
+  return [
+    'implement',
+    'create contract',
+    'write contract',
+    'generate contract',
+    'fix build',
+    'build errors',
+    'compile error',
+    'modify',
+    'edit',
+    'update',
+    'add ',
+    'remove',
+    'refactor',
+    'change',
+    'write tests',
+    'fix tests',
+  ].some((kw) => m.includes(kw));
+}
+
 export const chatRouter = Router();
 
 /** Convert an SSE event to a one-line log string (mirrors ChatPanel appendLog format).
@@ -81,7 +103,8 @@ chatRouter.post('/', async (req: Request, res: Response) => {
   db.upsertUser(userId);
 
   const network = (body.network ?? DEFAULT_NETWORK) as StellarNetwork;
-  log('INFO', 'POST /chat', { userId, sessionId: body.sessionId ?? null, projectId: body.projectId ?? null, network });
+  const agentMode = body.agentMode === 'ui' ? 'ui' : 'contract';
+  log('INFO', 'POST /chat', { userId, sessionId: body.sessionId ?? null, projectId: body.projectId ?? null, network, agentMode });
 
   // ── Resolve session ──────────────────────────────────────────────────────
   // (session already declared above emit — reassign from DB if needed)
@@ -102,7 +125,9 @@ chatRouter.post('/', async (req: Request, res: Response) => {
         messages: [],
         network: row.network as StellarNetwork,
         thinkingBudget: row.thinking_budget ?? undefined,
+        phase: (project?.phase ?? 'design') as 'design' | 'code',
         projectSpec: project?.spec ?? '',
+        agentMode,
         _messagesLoaded: false,
         _persistedMsgCount: 0,
       };
@@ -147,6 +172,23 @@ chatRouter.post('/', async (req: Request, res: Response) => {
     }
   }
 
+  // If a spec already exists and the user is clearly asking for implementation/edit/fix,
+  // auto-enter code phase. This prevents getting stuck in design-mode on follow-up turns.
+  if (
+    session &&
+    agentMode === 'contract' &&
+    session.phase === 'design' &&
+    session.projectSpec?.trim() &&
+    isImplementationIntent(body.message)
+  ) {
+    session.phase = 'code';
+    db.updateProjectPhase(session.projectId, 'code');
+    log('INFO', 'auto-promoted session to code phase from user intent', {
+      sessionId: session.id,
+      projectId: session.projectId,
+    });
+  }
+
   // No existing session — create one under a project
   if (!session) {
     let projectId: string;
@@ -175,15 +217,29 @@ chatRouter.post('/', async (req: Request, res: Response) => {
     // Load project spec into session
     const project = db.getProject(projectId);
     session.projectSpec = project?.spec ?? '';
+    session.agentMode = agentMode;
 
     log('INFO', 'session created', { sessionId: session.id, projectId, userId, network });
     emit({ type: 'session_created', sessionId: session.id });
   } else {
+    session.agentMode = agentMode;
     log('INFO', 'session resumed', { sessionId: session.id, projectId: session.projectId, userId, network });
   }
 
   const controller = new AbortController();
-  req.on('close', () => controller.abort());
+  // Use res.on('close') — NOT req.on('close') — to detect SSE client disconnection.
+  // For POST-based SSE, req.on('close') fires when the request body stream is closed
+  // (which happens quickly after body-parser reads the JSON body, especially through
+  // a dev proxy like Vite that half-closes the request TCP stream after forwarding the body).
+  // res.on('close') fires only when the actual SSE response connection is torn down.
+  res.on('close', () => {
+    log('INFO', 'SSE client disconnected (res close)', { sessionId: session?.id ?? 'unknown' });
+    controller.abort();
+  });
+  // Debug: log req close separately so we can see if it fires prematurely
+  req.on('close', () => {
+    log('INFO', 'req close fired', { sessionId: session?.id ?? 'unknown', alreadyAborted: controller.signal.aborted });
+  });
 
   const loopStart = Date.now();
   log('INFO', 'agent loop starting', { sessionId: session.id });
@@ -196,6 +252,7 @@ chatRouter.post('/', async (req: Request, res: Response) => {
       db,
       emit,
       controller.signal,
+      agentMode,
     )) {
       // generator yields between turns for backpressure
     }

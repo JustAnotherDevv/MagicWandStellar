@@ -31,6 +31,8 @@ export class SessionStore {
     const effectiveWorkspaceDir = workspaceDir ?? path.join(this.workspacesBase, id);
     await fs.mkdir(effectiveWorkspaceDir, { recursive: true });
 
+    // Load project phase so new sessions for an accepted project start in code phase
+    const project = this.db.getProject(projectId);
     const session: Session = {
       id,
       projectId,
@@ -41,6 +43,8 @@ export class SessionStore {
       messages: [],
       network,
       thinkingBudget,
+      phase: (project?.phase ?? 'design') as 'design' | 'code',
+      projectSpec: project?.spec ?? '',
       _messagesLoaded: true,
       _persistedMsgCount: 0,
     };
@@ -111,6 +115,7 @@ export class SessionStore {
         messages: [],
         network: row.network as StellarNetwork,
         thinkingBudget: row.thinking_budget ?? undefined,
+        phase: (project?.phase ?? 'design') as 'design' | 'code',
         projectSpec: project?.spec ?? '',
         _messagesLoaded: false,  // lazy — load on first chat access
         _persistedMsgCount: 0,

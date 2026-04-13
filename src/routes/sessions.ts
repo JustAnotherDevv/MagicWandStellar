@@ -91,6 +91,25 @@ sessionsRouter.get('/:id/logs', (req: Request, res: Response) => {
   res.json({ logs: rows });
 });
 
+sessionsRouter.post('/:id/accept', (req: Request, res: Response) => {
+  const id = req.params['id'] as string;
+
+  // Update in-memory session phase if present
+  const session = sessionStore.get(id);
+  const sessionRow = session ? null : db.getActiveSession(id);
+  const projectId = session?.projectId ?? sessionRow?.project_id;
+
+  if (!projectId) {
+    res.status(404).json({ error: `Session ${id} not found` });
+    return;
+  }
+
+  if (session) session.phase = 'code';
+  db.updateProjectPhase(projectId, 'code');
+
+  res.json({ ok: true, phase: 'code' });
+});
+
 sessionsRouter.delete('/:id', async (req: Request, res: Response) => {
   const id = req.params['id'] as string;
   const deleted = await sessionStore.delete(id);

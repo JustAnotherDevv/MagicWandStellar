@@ -21,6 +21,16 @@ export interface ProjectRow {
   user_id: string;
   name: string;
   spec: string;
+  phase: string;  // 'design' | 'code'
+  app_name: string;
+  app_description: string;
+  app_tags: string;
+  app_logo_url: string;
+  app_banner_url: string;
+  app_runtime_url: string;
+  app_like_count: number;
+  app_dislike_count: number;
+  app_published_at: number | null;
   network: string;
   workspace_dir: string;
   created_at: number;
@@ -137,8 +147,9 @@ export class DatabaseStore {
     const now = Date.now();
     this.db
       .prepare(
-        `INSERT INTO projects (id, user_id, name, spec, network, workspace_dir, created_at, updated_at)
-         VALUES (?, ?, ?, '', ?, ?, ?, ?)`,
+        `INSERT INTO projects
+           (id, user_id, name, spec, app_name, app_description, app_tags, app_logo_url, app_banner_url, app_runtime_url, app_like_count, app_dislike_count, app_published_at, network, workspace_dir, created_at, updated_at)
+         VALUES (?, ?, ?, '', '', '', '', '', '', '', 0, 0, NULL, ?, ?, ?, ?)`,
       )
       .run(p.id, p.userId, p.name, p.network, p.workspaceDir, now, now);
     log('INFO', 'createProject', { projectId: p.id, userId: p.userId, name: p.name, network: p.network });
@@ -153,6 +164,53 @@ export class DatabaseStore {
     this.db
       .prepare(`UPDATE projects SET spec = ?, updated_at = ? WHERE id = ?`)
       .run(spec, Date.now(), projectId);
+  }
+
+  updateProjectPhase(projectId: string, phase: 'design' | 'code'): void {
+    this.db
+      .prepare(`UPDATE projects SET phase = ?, updated_at = ? WHERE id = ?`)
+      .run(phase, Date.now(), projectId);
+  }
+
+  updateProjectApp(projectId: string, app: {
+    appName?: string;
+    appDescription?: string;
+    appTags?: string;
+    appLogoUrl?: string;
+    appBannerUrl?: string;
+    appRuntimeUrl?: string;
+    appLikeCount?: number;
+    appDislikeCount?: number;
+    appPublishedAt?: number | null;
+  }): void {
+    const current = this.getProject(projectId);
+    if (!current) return;
+    this.db
+      .prepare(
+        `UPDATE projects
+         SET app_name = ?, app_description = ?, app_tags = ?, app_logo_url = ?, app_banner_url = ?, app_runtime_url = ?, app_like_count = ?, app_dislike_count = ?, app_published_at = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        app.appName ?? current.app_name ?? '',
+        app.appDescription ?? current.app_description ?? '',
+        app.appTags ?? current.app_tags ?? '',
+        app.appLogoUrl ?? current.app_logo_url ?? '',
+        app.appBannerUrl ?? current.app_banner_url ?? '',
+        app.appRuntimeUrl ?? current.app_runtime_url ?? '',
+        app.appLikeCount ?? current.app_like_count ?? 0,
+        app.appDislikeCount ?? current.app_dislike_count ?? 0,
+        app.appPublishedAt === undefined ? current.app_published_at : app.appPublishedAt,
+        Date.now(),
+        projectId,
+      );
+  }
+
+  reactToProjectApp(projectId: string, reaction: 'like' | 'dislike'): void {
+    const col = reaction === 'like' ? 'app_like_count' : 'app_dislike_count';
+    this.db
+      .prepare(`UPDATE projects SET ${col} = ${col} + 1, updated_at = ? WHERE id = ?`)
+      .run(Date.now(), projectId);
   }
 
   listProjects(filter?: { userId?: string; network?: string }): ProjectRow[] {

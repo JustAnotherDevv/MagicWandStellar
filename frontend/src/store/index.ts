@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Project, SessionSummary, ChatMessage, ToolUseEvent, Contract } from '../types'
+import type { Project, SessionSummary, ChatMessage, ToolUseEvent, Contract, FileNode, ChatAgentMode } from '../types'
 
-export type PanelView = 'chat' | 'spec' | 'code' | 'tests' | 'logs'
+export type PanelView = 'chat' | 'spec' | 'code' | 'tests' | 'logs' | 'contracts' | 'app'
+export type ShellView = 'build' | 'apps'
 
 interface WalletState {
   publicKey: string | null
@@ -19,6 +20,8 @@ interface ChatTurn {
   abortController: AbortController | null
   error: string | null
   usage: { inputTokens: number; outputTokens: number } | null
+  specNeedsApproval: boolean
+  agentMode: ChatAgentMode
 }
 
 interface AppState {
@@ -46,6 +49,8 @@ interface AppState {
   // Panel
   panelView: PanelView
   setPanelView: (v: PanelView) => void
+  shellView: ShellView
+  setShellView: (v: ShellView) => void
 
   // Spec editor
   specDraft: string
@@ -58,6 +63,17 @@ interface AppState {
   setActiveFile: (f: string | null) => void
   fileContents: Record<string, string>
   setFileContent: (path: string, content: string) => void
+  // File tree — stored globally so ChatPanel can refresh it directly on file_written
+  files: FileNode[]
+  setFiles: (files: FileNode[]) => void
+  filesProjectId: string | null   // which project the current files[] belongs to
+  // Signal a freshly-written file so CodePanel can animate the reveal
+  newlyWrittenFile: { path: string; content: string } | null
+  signalFileWritten: (path: string, content: string) => void
+  clearNewlyWrittenFile: () => void
+  // Monotonic counter — increments on every signalFileWritten; CodePanel watches this
+  // instead of newlyWrittenFile?.content (avoids large-string dep comparison)
+  fileListRevision: number
 
   // Chat
   chat: ChatTurn
@@ -72,10 +88,18 @@ interface AppState {
   setChatError: (e: string | null) => void
   finalizeStream: (usage: { inputTokens: number; outputTokens: number } | null) => void
 
+  // Spec approval
+  setSpecNeedsApproval: (b: boolean) => void
+  setChatAgentMode: (mode: ChatAgentMode) => void
+
   // Logs (circular buffer)
   logs: string[]
   appendLog: (line: string) => void
   clearLogs: () => void
+
+  // Landing page overlay
+  showLanding: boolean
+  setShowLanding: (v: boolean) => void
 }
 
 const DEFAULT_CHAT: ChatTurn = {
@@ -87,6 +111,8 @@ const DEFAULT_CHAT: ChatTurn = {
   abortController: null,
   error: null,
   usage: null,
+  specNeedsApproval: false,
+  agentMode: 'contract',
 }
 
 export const useStore = create<AppState>()(
@@ -127,6 +153,8 @@ export const useStore = create<AppState>()(
       // Panel
       panelView: 'chat',
       setPanelView: (panelView) => set({ panelView }),
+      shellView: 'build',
+      setShellView: (shellView) => set({ shellView }),
 
       // Spec
       specDraft: '',
@@ -140,6 +168,19 @@ export const useStore = create<AppState>()(
       fileContents: {},
       setFileContent: (path, content) =>
         set((s) => ({ fileContents: { ...s.fileContents, [path]: content } })),
+      files: [],
+      setFiles: (files) => set({ files }),
+      filesProjectId: null,
+      newlyWrittenFile: null,
+      signalFileWritten: (path, content) =>
+        set((s) => ({
+          newlyWrittenFile: { path, content },
+          activeFile: path,
+          fileContents: { ...s.fileContents, [path]: content },
+          fileListRevision: s.fileListRevision + 1,
+        })),
+      clearNewlyWrittenFile: () => set({ newlyWrittenFile: null }),
+      fileListRevision: 0,
 
       // Chat
       chat: { ...DEFAULT_CHAT },
@@ -172,11 +213,21 @@ export const useStore = create<AppState>()(
           },
         })),
 
+      // Spec approval
+      setSpecNeedsApproval: (specNeedsApproval) =>
+        set((s) => ({ chat: { ...s.chat, specNeedsApproval } })),
+      setChatAgentMode: (agentMode) =>
+        set((s) => ({ chat: { ...s.chat, agentMode } })),
+
       // Logs
       logs: [],
       appendLog: (line) =>
         set((s) => ({ logs: [...s.logs.slice(-499), line] })),
       clearLogs: () => set({ logs: [] }),
+
+      // Landing page
+      showLanding: false,
+      setShowLanding: (showLanding) => set({ showLanding }),
     }),
     {
       name: 'stellar-agents-ui',
@@ -185,6 +236,7 @@ export const useStore = create<AppState>()(
         activeProjectId: s.activeProjectId,
         activeSessionId: s.activeSessionId,
         panelView: s.panelView,
+        shellView: s.shellView,
       }),
     },
   ),

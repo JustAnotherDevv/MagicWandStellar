@@ -109,32 +109,48 @@ describe('contract creation and compilation', () => {
   let sessionId: string | undefined;
   let workspaceDirFromResponse: string | undefined;
 
-  it('agent creates a counter contract with correct Soroban patterns', skipIfNoKey(async () => {
+  // Design-first flow: message 1 → spec only (no code), message 2 → write files.
+  // The agent always produces a spec on the first message before writing any contract code.
+  it('agent designs a counter contract spec on first message', skipIfNoKey(async () => {
     const events = await collectSSE(
       `${server.baseURL}/chat`,
       {
-        message: `Write a minimal Soroban counter contract. Skip doc lookups — write from memory. Use contract_init to scaffold, then overwrite the generated lib.rs.
+        message: 'Design a minimal Soroban counter contract with initialize, increment, and get functions. Produce the architecture spec.',
+        userId,
+      },
+      { timeoutMs: 500_000 },
+    );
 
-CRITICAL pattern — use panics not Result types:
-- For re-init guard: if env.storage().instance().has(&DataKey::Admin) { panic!("already initialized"); }
-- All functions return plain values (no Result<T,E>), use require_auth() not ?
-- Use #[no_std], #[contracttype] for DataKey enum, #[contracterror] only if needed for emitting errors
+    expect(streamDone(events), `Stream error: ${streamError(events)}`).toBe(true);
+    sessionId = findSessionId(events);
 
-Functions: initialize(env: Env, admin: Address), increment(env: Env, by: i64), get(env: Env) -> i64
-After writing, run contract_build once. If it fails read the error and fix it, then stop — do not deploy.`,
+    // Design phase: spec must be saved, NO contract files written
+    const toolsUsed = extractToolNames(events);
+    const specSaved = toolsUsed.includes('update_project_spec') ||
+      events.some((e) => e.type === 'spec_updated');
+    expect(specSaved, `Expected spec to be saved. Tools used: ${toolsUsed.join(', ')}`).toBe(true);
+    expect(toolsUsed, 'write_file must NOT be called in design phase').not.toContain('write_file');
+  }));
+
+  it('agent creates counter contract files when asked after design', skipIfNoKey(async () => {
+    if (!sessionId) throw new Error('Design step must run first (no sessionId)');
+
+    const events = await collectSSE(
+      `${server.baseURL}/chat`,
+      {
+        message: 'The design looks good. Now implement the full contract code with the functions described.',
+        sessionId,
         userId,
       },
       { timeoutMs: 900_000 },
     );
 
     expect(streamDone(events), `Stream error: ${streamError(events)}`).toBe(true);
-    sessionId = findSessionId(events);
 
     const toolsUsed = extractToolNames(events);
-    expect(toolsUsed, 'Expected agent to use file tools').toContain('write_file');
+    expect(toolsUsed, 'Expected agent to write contract files').toContain('write_file');
 
     const text = extractText(events);
-    // Agent should confirm file creation
     expect(text.toLowerCase()).toMatch(/creat|writ|generat|counter/);
   }));
 

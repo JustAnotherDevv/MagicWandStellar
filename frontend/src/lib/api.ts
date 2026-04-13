@@ -1,4 +1,13 @@
-import type { Project, SessionSummary, Contract, HealthStatus, Stats, FileNode, BuildResult } from '../types'
+import type {
+  Project,
+  SessionSummary,
+  Contract,
+  HealthStatus,
+  Stats,
+  FileNode,
+  BuildResult,
+  ContractFunctionAbi,
+} from '../types'
 
 const BASE = '/api'
 
@@ -47,11 +56,21 @@ function normalizeProject(p: any): Project {
     userId: p.user_id ?? p.userId ?? '',
     name: p.name,
     spec: p.spec ?? '',
+    phase: (p.phase ?? 'design') as 'design' | 'code',
     network: p.network,
     workspaceDir: p.workspace_dir ?? p.workspaceDir ?? '',
     createdAt: p.created_at ?? p.createdAt ?? Date.now(),
     updatedAt: p.updated_at ?? p.updatedAt ?? Date.now(),
     contractCount: p.contractCount,
+    appName: p.app_name ?? p.appName ?? '',
+    appDescription: p.app_description ?? p.appDescription ?? '',
+    appTags: p.app_tags ?? p.appTags ?? '',
+    appLogoUrl: p.app_logo_url ?? p.appLogoUrl ?? '',
+    appBannerUrl: p.app_banner_url ?? p.appBannerUrl ?? '',
+    appRuntimeUrl: p.app_runtime_url ?? p.appRuntimeUrl ?? '',
+    appLikeCount: p.app_like_count ?? p.appLikeCount ?? 0,
+    appDislikeCount: p.app_dislike_count ?? p.appDislikeCount ?? 0,
+    appPublishedAt: p.app_published_at ?? p.appPublishedAt ?? null,
   }
 }
 
@@ -98,13 +117,24 @@ export const api = {
     userId: string
     name: string
     description?: string
-    network: 'testnet' | 'mainnet'
+    network: 'testnet' | 'mainnet' | 'futurenet' | 'local'
   }): Promise<Project> => {
     const res = await post<unknown>('/projects', body)
     return normalizeProject(res)
   },
 
-  updateProject: async (id: string, body: { spec?: string }): Promise<Project> => {
+  updateProject: async (id: string, body: {
+    spec?: string
+    appName?: string
+    appDescription?: string
+    appTags?: string
+    appLogoUrl?: string
+    appBannerUrl?: string
+    appRuntimeUrl?: string
+    appLikeCount?: number
+    appDislikeCount?: number
+    appPublishedAt?: number | null
+  }): Promise<Project> => {
     const res = await patch<unknown>(`/projects/${id}`, body)
     return normalizeProject(res)
   },
@@ -120,6 +150,11 @@ export const api = {
   getContracts: async (projectId: string): Promise<Contract[]> => {
     const res = await get<{ contracts: unknown[] }>(`/projects/${projectId}/contracts`)
     return res.contracts.map(normalizeContract)
+  },
+
+  reactToApp: async (projectId: string, type: 'like' | 'dislike'): Promise<Project> => {
+    const res = await post<unknown>(`/projects/${projectId}/reaction`, { type })
+    return normalizeProject(res)
   },
 
   // Sessions
@@ -182,10 +217,47 @@ export const api = {
   runTests: (projectId: string): Promise<BuildResult> =>
     post(`/workspace/${projectId}/test`, {}),
 
+  listWasmArtifacts: async (projectId: string): Promise<string[]> => {
+    const res = await get<{ files: string[] }>(`/workspace/${projectId}/artifacts/wasm`)
+    return res.files
+  },
+
+  deployContract: (projectId: string, body: {
+    wasmPath: string
+    source: string
+    contractAlias?: string
+    network?: string
+    sessionId?: string
+  }): Promise<BuildResult> =>
+    post(`/workspace/${projectId}/deploy`, body),
+
+  getContractAbi: async (projectId: string, contractId: string, network?: string): Promise<{
+    success: boolean
+    output: string
+    functions: ContractFunctionAbi[]
+  }> =>
+    get(`/workspace/${projectId}/contracts/${contractId}/abi${network ? `?network=${encodeURIComponent(network)}` : ''}`),
+
+  invokeContract: (projectId: string, contractId: string, body: {
+    functionName: string
+    params?: Record<string, string>
+    source: string
+    network?: string
+    sendTransaction?: boolean
+  }): Promise<BuildResult> =>
+    post(`/workspace/${projectId}/contracts/${contractId}/invoke`, body),
+
+  getRuntimeInfo: (projectId: string): Promise<{ available: boolean; url?: string }> =>
+    get(`/workspace/${projectId}/runtime-info`),
+
   getLogs: async (sessionId: string): Promise<string[]> => {
     const res = await get<{ logs: Array<{ message: string }> }>(`/sessions/${sessionId}/logs`)
     return res.logs.map((l) => l.message)
   },
+
+  // Accept the spec and transition the session to code phase
+  acceptSpec: (sessionId: string): Promise<{ ok: boolean; phase: string }> =>
+    post(`/sessions/${sessionId}/accept`, {}),
 
   // Chat (raw fetch — caller handles SSE)
   chat: (body: {
@@ -194,6 +266,7 @@ export const api = {
     projectId?: string
     userId?: string
     network?: string
+    agentMode?: 'contract' | 'ui'
   }) =>
     fetch(`${BASE}/chat`, {
       method: 'POST',

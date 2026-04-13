@@ -64,6 +64,150 @@ function runCommand(cmd: string, args: string[], cwd: string): Promise<{ success
   });
 }
 
+function resolveSafe(baseDir: string, relPath: string): string {
+  const resolved = path.resolve(baseDir, relPath);
+  const base = path.resolve(baseDir);
+  if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+    throw new Error(`Path traversal attempt blocked: "${relPath}"`);
+  }
+  return resolved;
+}
+
+/**
+ * Find the directory to run cargo/stellar commands from.
+ * `stellar contract init` creates files in a subdirectory, not at workspace root.
+ * Check root first; if no Cargo.toml there, scan one level of subdirectories.
+ */
+async function findCargoRoot(workspaceDir: string): Promise<string> {
+  // 1. Check workspace root directly
+  try {
+    await fs.access(path.join(workspaceDir, 'Cargo.toml'));
+    return workspaceDir;
+  } catch { /* not at root */ }
+
+  // 2. Scan immediate subdirectories
+  try {
+    const entries = await fs.readdir(workspaceDir, { withFileTypes: true });
+    for (const entry of entries.filter((e) => e.isDirectory())) {
+      const subdir = path.join(workspaceDir, entry.name);
+      try {
+        await fs.access(path.join(subdir, 'Cargo.toml'));
+        return subdir;
+      } catch { /* not here */ }
+    }
+  } catch { /* readdir failed */ }
+
+  return workspaceDir; // fall back — let cargo produce its own error
+}
+
+async function listWasmFiles(workspaceDir: string): Promise<string[]> {
+  const out: string[] = [];
+  async function walk(dir: string, rel: string): Promise<void> {
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const e of entries) {
+      const nextRel = rel ? `${rel}/${e.name}` : e.name;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        await walk(full, nextRel);
+      } else if (e.isFile() && e.name.endsWith('.wasm')) {
+        out.push(nextRel);
+      }
+    }
+  }
+  await walk(workspaceDir, '');
+  return out.sort();
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function findRuntimeRoot(workspaceDir: string): Promise<string | null> {
+  const candidates = [
+    path.join(workspaceDir, 'frontend', 'dist'),
+    path.join(workspaceDir, 'dist'),
+    path.join(workspaceDir, 'frontend'),
+    path.join(workspaceDir, 'app'),
+    path.join(workspaceDir, 'ui'),
+    workspaceDir,
+  ];
+  for (const dir of candidates) {
+    if (await pathExists(path.join(dir, 'index.html'))) return dir;
+  }
+  return null;
+}
+
+function parseInterfaceToAbi(output: string): Array<{
+  name: string;
+  params: Array<{ name: string; type: string }>;
+  returnType?: string;
+  isReadOnly: boolean;
+}> {
+  const splitTopLevel = (text: string): string[] => {
+    const out: string[] = [];
+    let current = '';
+    let angle = 0;
+    let paren = 0;
+    let bracket = 0;
+    for (const ch of text) {
+      if (ch === '<') angle++;
+      else if (ch === '>') angle = Math.max(0, angle - 1);
+      else if (ch === '(') paren++;
+      else if (ch === ')') paren = Math.max(0, paren - 1);
+      else if (ch === '[') bracket++;
+      else if (ch === ']') bracket = Math.max(0, bracket - 1);
+      if (ch === ',' && angle === 0 && paren === 0 && bracket === 0) {
+        if (current.trim()) out.push(current.trim());
+        current = '';
+        continue;
+      }
+      current += ch;
+    }
+    if (current.trim()) out.push(current.trim());
+    return out;
+  };
+
+  const simplifyType = (t: string): string =>
+    t
+      .replace(/\bsoroban_sdk::/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const functions: Array<{
+    name: string;
+    params: Array<{ name: string; type: string }>;
+    returnType?: string;
+    isReadOnly: boolean;
+  }> = [];
+  const re = /fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)(?:\s*->\s*([^\n{]+))?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(output)) !== null) {
+    const name = m[1] ?? '';
+    const paramsRaw = (m[2] ?? '').trim();
+    const returnType = simplifyType((m[3] ?? '').trim()) || undefined;
+    const params = paramsRaw
+      ? splitTopLevel(paramsRaw).map((part, idx) => {
+          const colonIdx = part.indexOf(':');
+          if (colonIdx === -1) {
+            return { name: `arg${idx + 1}`, type: simplifyType(part) || 'Unknown' };
+          }
+          const pname = part.slice(0, colonIdx).trim();
+          const ptype = part.slice(colonIdx + 1).trim();
+          return { name: pname || `arg${idx + 1}`, type: simplifyType(ptype) || 'Unknown' };
+        })
+      : [];
+    const lowered = name.toLowerCase();
+    const isReadOnly = /^(get_|get|read_|read|view_|view|balance|allowance|name|symbol|decimals|is_)/.test(lowered);
+    functions.push({ name, params, returnType, isReadOnly });
+  }
+  return functions;
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 // GET /workspace/:projectId/files
@@ -137,7 +281,8 @@ workspaceRouter.post('/:projectId/build', async (req: Request, res: Response) =>
   }
 
   const projectId = req.params['projectId'] as string;
-  const result = await runCommand('stellar', ['contract', 'build'], ws.workspaceDir);
+  const cargoRoot = await findCargoRoot(ws.workspaceDir);
+  const result = await runCommand('stellar', ['contract', 'build'], cargoRoot);
   db.insertLog({
     sessionId: '',
     projectId,
@@ -162,7 +307,8 @@ workspaceRouter.post('/:projectId/test', async (req: Request, res: Response) => 
   }
 
   const projectId = req.params['projectId'] as string;
-  const result = await runCommand('cargo', ['test', '--', '--nocapture'], ws.workspaceDir);
+  const cargoRoot = await findCargoRoot(ws.workspaceDir);
+  const result = await runCommand('cargo', ['test', '--', '--nocapture'], cargoRoot);
   db.insertLog({
     sessionId: '',
     projectId,
@@ -172,4 +318,180 @@ workspaceRouter.post('/:projectId/test', async (req: Request, res: Response) => 
     data: JSON.stringify({ success: result.success, outputLen: result.output.length }),
   });
   res.json(result);
+});
+
+// GET /workspace/:projectId/artifacts/wasm
+workspaceRouter.get('/:projectId/artifacts/wasm', async (req: Request, res: Response) => {
+  const ws = await getProjectWorkspace(req.params['projectId'] as string);
+  if (!ws) { res.status(404).json({ error: 'Project not found' }); return; }
+  const files = await listWasmFiles(ws.workspaceDir);
+  res.json({ files });
+});
+
+// POST /workspace/:projectId/deploy
+workspaceRouter.post('/:projectId/deploy', async (req: Request, res: Response) => {
+  const projectId = req.params['projectId'] as string;
+  const project = db.getProject(projectId);
+  if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+
+  const {
+    wasmPath,
+    source,
+    contractAlias,
+    network,
+    sessionId,
+  } = req.body as {
+    wasmPath?: string;
+    source?: string;
+    contractAlias?: string;
+    network?: string;
+    sessionId?: string;
+  };
+  if (!wasmPath || !source) {
+    res.status(400).json({ error: 'wasmPath and source are required' });
+    return;
+  }
+
+  let wasmAbs: string;
+  try {
+    wasmAbs = resolveSafe(project.workspace_dir, wasmPath);
+    await fs.access(wasmAbs);
+  } catch {
+    res.status(400).json({ error: 'Invalid wasmPath or file does not exist' });
+    return;
+  }
+
+  const targetNetwork = network ?? project.network ?? 'testnet';
+  const args = ['contract', 'deploy', '--wasm', wasmAbs, '--source', source, '--network', targetNetwork];
+  if (contractAlias?.trim()) args.push('--alias', contractAlias.trim());
+  const result = await runCommand('stellar', args, project.workspace_dir);
+
+  if (result.success) {
+    const contractIdMatch = result.output.match(/C[A-Z0-9]{55}/);
+    const contractId = contractIdMatch?.[0] ?? '';
+    if (contractId) {
+      const activeSession = sessionId
+        ? db.getActiveSession(sessionId)
+        : db.loadActiveSessions().find((s) => s.project_id === projectId);
+      db.saveContract({
+        contractId,
+        projectId,
+        sessionId: activeSession?.id ?? `manual_${Date.now()}`,
+        userId: project.user_id,
+        network: targetNetwork as 'testnet' | 'mainnet' | 'futurenet' | 'local',
+        wasmPath,
+        sourceAccount: source,
+        contractAlias: contractAlias?.trim() || undefined,
+      });
+    }
+  }
+
+  db.insertLog({
+    sessionId: sessionId ?? '',
+    projectId,
+    source: 'deploy',
+    level: result.success ? 'INFO' : 'ERROR',
+    message: `[deploy] ${result.success ? 'success' : 'failed'} — ${result.output.slice(0, 200)}`,
+    data: JSON.stringify({ success: result.success, outputLen: result.output.length }),
+  });
+
+  res.json(result);
+});
+
+// GET /workspace/:projectId/contracts/:contractId/abi?network=
+workspaceRouter.get('/:projectId/contracts/:contractId/abi', async (req: Request, res: Response) => {
+  const project = db.getProject(req.params['projectId'] as string);
+  if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+  const contractId = req.params['contractId'] as string;
+  const network = ((req.query['network'] as string) ?? project.network ?? 'testnet');
+  const result = await runCommand(
+    'stellar',
+    ['contract', 'info', 'interface', '--id', contractId, '--network', network],
+    project.workspace_dir,
+  );
+  const functions = parseInterfaceToAbi(result.output);
+  res.json({ success: result.success, output: result.output, functions });
+});
+
+// POST /workspace/:projectId/contracts/:contractId/invoke
+workspaceRouter.post('/:projectId/contracts/:contractId/invoke', async (req: Request, res: Response) => {
+  const project = db.getProject(req.params['projectId'] as string);
+  if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+  const contractId = req.params['contractId'] as string;
+  const {
+    functionName,
+    params,
+    source,
+    network,
+    sendTransaction,
+  } = req.body as {
+    functionName?: string;
+    params?: Record<string, string>;
+    source?: string;
+    network?: string;
+    sendTransaction?: boolean;
+  };
+  if (!functionName || !source) {
+    res.status(400).json({ error: 'functionName and source are required' });
+    return;
+  }
+  const targetNetwork = network ?? project.network ?? 'testnet';
+  const send = sendTransaction === false ? 'no' : 'yes';
+
+  const fnArgs: string[] = [];
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (!k) continue;
+      // Env/context argument is provided by runtime, never via CLI flags.
+      if (k === 'env') continue;
+      fnArgs.push(`--${k}`, v ?? '');
+    }
+  }
+
+  const result = await runCommand(
+    'stellar',
+    ['contract', 'invoke', '--id', contractId, '--source', source, '--network', targetNetwork, `--send=${send}`, '--', functionName, ...fnArgs],
+    project.workspace_dir,
+  );
+  res.json(result);
+});
+
+// GET /workspace/:projectId/runtime-info
+workspaceRouter.get('/:projectId/runtime-info', async (req: Request, res: Response) => {
+  const ws = await getProjectWorkspace(req.params['projectId'] as string);
+  if (!ws) { res.status(404).json({ error: 'Project not found' }); return; }
+  const root = await findRuntimeRoot(ws.workspaceDir);
+  if (!root) {
+    res.json({ available: false });
+    return;
+  }
+  res.json({
+    available: true,
+    url: `/api/workspace/${req.params['projectId'] as string}/runtime/index.html`,
+  });
+});
+
+// GET /workspace/:projectId/runtime/*runtimePath  (serves local app preview)
+workspaceRouter.get('/:projectId/runtime/*runtimePath', async (req: Request, res: Response) => {
+  const projectId = req.params['projectId'] as string;
+  const ws = await getProjectWorkspace(projectId);
+  if (!ws) { res.status(404).json({ error: 'Project not found' }); return; }
+  const root = await findRuntimeRoot(ws.workspaceDir);
+  if (!root) { res.status(404).json({ error: 'No local runtime found' }); return; }
+
+  const raw = (req.params as Record<string, string | string[]>)['runtimePath'];
+  const relPath = (Array.isArray(raw) ? raw.join('/') : (raw ?? 'index.html')).trim() || 'index.html';
+  let full: string;
+  try {
+    full = resolveSafe(root, relPath);
+  } catch {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  if (!(await pathExists(full))) {
+    res.status(404).json({ error: 'Runtime file not found' });
+    return;
+  }
+  res.sendFile(full);
 });

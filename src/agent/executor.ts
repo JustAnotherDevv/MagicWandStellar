@@ -25,7 +25,7 @@ type ToolHandler = (
 const HANDLERS: Record<string, ToolHandler> = {
   // File ops
   read_file: (i, s) => fileOps.readFile(i as { path: string }, s.workspaceDir),
-  write_file: (i, s) => fileOps.writeFile(i as { path: string; content: string }, s.workspaceDir),
+  write_file: (i, s) => fileOps.writeFile(i as { path: string; content: string }, s.workspaceDir, s),
   list_dir: (i, s) => fileOps.listDir(i as { path: string }, s.workspaceDir),
   delete_file: (i, s) => fileOps.deleteFile(i as { path: string }, s.workspaceDir),
   make_dir: (i, s) => fileOps.makeDir(i as { path: string }, s.workspaceDir),

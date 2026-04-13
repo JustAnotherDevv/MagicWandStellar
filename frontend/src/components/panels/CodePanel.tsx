@@ -1,14 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useStore } from '@/store'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { Loader2, FileCode, ChevronRight, FolderOpen, RefreshCw } from 'lucide-react'
 import Editor from '@monaco-editor/react'
 import { cn } from '@/lib/utils'
 import type { FileNode } from '@/types'
+
+interface RevealState {
+  path: string
+  content: string
+  revealedLines: number
+  totalLines: number
+}
 
 export function CodePanel() {
   const activeProject = useStore((s) => s.activeProject())
@@ -16,25 +21,35 @@ export function CodePanel() {
   const setActiveFile = useStore((s) => s.setActiveFile)
   const fileContents = useStore((s) => s.fileContents)
   const setFileContent = useStore((s) => s.setFileContent)
+  const files = useStore((s) => s.files)
+  const setFiles = useStore((s) => s.setFiles)
+  const newlyWrittenFile = useStore((s) => s.newlyWrittenFile)
+  const clearNewlyWrittenFile = useStore((s) => s.clearNewlyWrittenFile)
+  const isStreaming = useStore((s) => s.chat.isStreaming)
 
-  const [files, setFiles] = useState<FileNode[]>([])
+  const [revealState, setRevealState] = useState<RevealState | null>(null)
+  const revealScrollRef = useRef<HTMLDivElement>(null)
+
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  // loadFiles reads projectId from the store directly (avoids stale closure issues).
   const loadFiles = async () => {
-    if (!activeProject) return
+    const projectId = useStore.getState().activeProjectId
+    if (!projectId) return
     setLoading(true)
     setError('')
     try {
-      const result = await api.getFiles(activeProject.id)
+      const result = await api.getFiles(projectId)
       setFiles(result)
-      // Auto-select first rust file
-      if (!activeFile && result.length > 0) {
+      // Auto-select first file if nothing is selected
+      const currentActiveFile = useStore.getState().activeFile
+      if (!currentActiveFile && result.length > 0) {
         const first = findFirstFile(result)
         if (first) {
           setActiveFile(first.path)
-          loadFileContent(activeProject.id, first.path)
+          loadFileContent(projectId, first.path)
         }
       }
     } catch (e: any) {
@@ -76,6 +91,53 @@ export function CodePanel() {
     setActiveFile(null)
     loadFiles()
   }, [activeProject?.id])
+
+  // While the agent is streaming, poll for new files every 1.5s so they appear
+  // in the sidebar without requiring a manual refresh click.
+  useEffect(() => {
+    if (!isStreaming) return
+    const id = setInterval(loadFiles, 1500)
+    return () => clearInterval(id)
+  }, [isStreaming])
+
+  // Start line-by-line reveal animation when a new file is written by the agent
+  useEffect(() => {
+    if (!newlyWrittenFile) return
+    const lines = newlyWrittenFile.content.split('\n')
+    setRevealState({
+      path: newlyWrittenFile.path,
+      content: newlyWrittenFile.content,
+      revealedLines: 0,
+      totalLines: lines.length,
+    })
+    clearNewlyWrittenFile()
+  }, [newlyWrittenFile?.path])
+
+  // Drive the reveal animation at ~60fps, revealing ~1/25 of the file per frame
+  useEffect(() => {
+    if (!revealState || revealState.revealedLines >= revealState.totalLines) return
+    const batchSize = Math.max(2, Math.ceil(revealState.totalLines / 25))
+    const id = requestAnimationFrame(() => {
+      setRevealState((s) =>
+        s ? { ...s, revealedLines: Math.min(s.totalLines, s.revealedLines + batchSize) } : null,
+      )
+    })
+    return () => cancelAnimationFrame(id)
+  }, [revealState?.revealedLines, revealState?.totalLines])
+
+  // Auto-scroll the reveal pre to the bottom as lines appear
+  useEffect(() => {
+    if (revealScrollRef.current) {
+      revealScrollRef.current.scrollTop = revealScrollRef.current.scrollHeight
+    }
+  }, [revealState?.revealedLines])
+
+  // Clear reveal state once animation completes so Monaco editor takes over
+  useEffect(() => {
+    if (!revealState || revealState.revealedLines < revealState.totalLines) return
+    const id = setTimeout(() => setRevealState(null), 400)
+    return () => clearTimeout(id)
+  }, [revealState?.revealedLines])
 
   const langForPath = (path: string) => {
     if (path.endsWith('.rs')) return 'rust'
@@ -146,29 +208,45 @@ export function CodePanel() {
               </Button>
             </div>
 
-            {/* Monaco */}
-            <div className="flex-1">
-              <Editor
-                language={langForPath(activeFile)}
-                value={fileContents[activeFile] ?? ''}
-                onChange={(v) => {
-                  if (v !== undefined && activeFile) setFileContent(activeFile, v)
-                }}
-                theme="vs-dark"
-                options={{
-                  fontSize: 13,
-                  fontFamily: "'JetBrains Mono', monospace",
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  lineNumbers: 'on',
-                  renderLineHighlight: 'gutter',
-                  padding: { top: 12, bottom: 12 },
-                  tabSize: 4,
-                  wordWrap: 'off',
-                  automaticLayout: true,
-                }}
-              />
-            </div>
+            {/* Live reveal animation — shown while agent is writing this file */}
+            {revealState && revealState.path === activeFile ? (
+              <div
+                ref={revealScrollRef}
+                className="flex-1 overflow-auto bg-[#1e1e1e]"
+                style={{ scrollBehavior: 'smooth' }}
+              >
+                <pre className="px-4 py-3 text-[13px] font-mono leading-5 text-[#d4d4d4] whitespace-pre m-0">
+                  {revealState.content.split('\n').slice(0, revealState.revealedLines).join('\n')}
+                  {revealState.revealedLines < revealState.totalLines && (
+                    <span className="text-accent animate-pulse">▋</span>
+                  )}
+                </pre>
+              </div>
+            ) : (
+              /* Monaco editor — shown once reveal completes or for files not currently being written */
+              <div className="flex-1">
+                <Editor
+                  language={langForPath(activeFile)}
+                  value={fileContents[activeFile] ?? ''}
+                  onChange={(v) => {
+                    if (v !== undefined && activeFile) setFileContent(activeFile, v)
+                  }}
+                  theme="vs-dark"
+                  options={{
+                    fontSize: 13,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    lineNumbers: 'on',
+                    renderLineHighlight: 'gutter',
+                    padding: { top: 12, bottom: 12 },
+                    tabSize: 4,
+                    wordWrap: 'off',
+                    automaticLayout: true,
+                  }}
+                />
+              </div>
+            )}
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-ink-muted text-sm">

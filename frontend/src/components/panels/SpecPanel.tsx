@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect, memo } from 'react'
 import { useStore } from '@/store'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -12,7 +12,7 @@ import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 import { MermaidBlock } from '@/components/MermaidBlock'
 
-export function SpecPanel() {
+export const SpecPanel = memo(function SpecPanel() {
   const activeProject = useStore((s) => s.activeProject())
   const projects = useStore((s) => s.projects)
   const setProjects = useStore((s) => s.setProjects)
@@ -25,11 +25,20 @@ export function SpecPanel() {
   const [saved, setSaved] = useState(false)
   const [originalDraft, setOriginalDraft] = useState('')
 
+  // Preserve scroll position when specDraft updates (agent streams spec in code phase)
+  const viewScrollRef = useRef<HTMLDivElement>(null)
+  const savedScrollTop = useRef(0)
+
+  useLayoutEffect(() => {
+    const el = viewScrollRef.current
+    if (el) el.scrollTop = savedScrollTop.current
+  }, [specDraft])
+
   useEffect(() => {
     if (activeProject) {
       setSpecDraft(activeProject.spec || '')
     }
-  }, [activeProject?.id])
+  }, [activeProject?.id, activeProject?.spec])
 
   const handleEdit = () => {
     setOriginalDraft(specDraft)
@@ -152,7 +161,13 @@ export function SpecPanel() {
           </div>
         </div>
       ) : (
-        <ScrollArea className="flex-1 px-6 py-5">
+        <div
+          ref={viewScrollRef}
+          className="flex-1 overflow-y-auto px-6 py-5"
+          onScroll={() => {
+            if (viewScrollRef.current) savedScrollTop.current = viewScrollRef.current.scrollTop
+          }}
+        >
           {hasSpec ? (
             <div className="prose-dark text-sm max-w-3xl">
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{specDraft}</ReactMarkdown>
@@ -160,11 +175,11 @@ export function SpecPanel() {
           ) : (
             <EmptySpec onEdit={handleEdit} />
           )}
-        </ScrollArea>
+        </div>
       )}
     </div>
   )
-}
+})
 
 function EmptySpec({ onEdit }: { onEdit: () => void }) {
   return (

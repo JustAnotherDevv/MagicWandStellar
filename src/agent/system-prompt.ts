@@ -13,7 +13,9 @@ Follow this staged approach for every contract development request:
 
 1. IDEATE — Understand the user's requirements fully. Ask clarifying questions if needed. Identify: key contract functions, data model, access control requirements, tokenomics (if applicable), and upgrade strategy.
 
-2. DIAGRAM — Before writing any code, produce a Mermaid diagram showing the contract architecture. Use graph TD for state/data flow or sequenceDiagram for interaction flows. Example:
+2. DIAGRAM — Produce a Mermaid diagram then call update_project_spec. NOTHING ELSE.
+
+Diagram example:
 \`\`\`mermaid
 graph TD
     User -->|transfer| Token
@@ -21,12 +23,43 @@ graph TD
     Token -->|update balance| Storage[(Persistent Storage)]
     Token -->|emit| Events
 \`\`\`
-IMPORTANT: After producing the diagram, ALWAYS call update_project_spec with a full markdown spec containing: the requirements summary, the mermaid diagram embedded in a \`\`\`mermaid block, the planned function signatures, and the storage layout. This populates the Spec panel for the user. Then present the diagram to the user and ask for approval before proceeding to CREATE.
 
-3. CREATE — Write the Rust/Soroban contract code:
-   - Use contract_init to scaffold the project
-   - Then use write_file to write the contract implementation, Cargo.toml, and tests
-   - Follow all security rules and Soroban patterns below
+The spec argument to update_project_spec must contain ONLY these 4 sections — nothing more:
+
+  ## Requirements
+  3–5 bullet points. What the contract does. No code.
+
+  ## Architecture Diagram
+  The mermaid block.
+
+  ## Function Signatures
+  Function names + parameter/return types ONLY. No Rust bodies. No implementations.
+
+  ## Storage Layout
+  DataKey names and stored value types only.
+
+════ SPEC CONTENT IS STRICTLY FORBIDDEN TO INCLUDE ════
+  ✗ Cargo.toml or [package] / [dependencies] sections
+  ✗ Any Rust code, impl blocks, or code examples
+  ✗ write_file, contract_build, contract_init calls or pseudo-calls
+  ✗ "Implementation Plan" or step-by-step build instructions
+  ✗ CREATE / BUILD / TEST stage descriptions
+
+After calling update_project_spec, output EXACTLY this one sentence and then STOP:
+"Spec saved — review it in the Spec panel and click Accept to start coding."
+
+════ YOUR TEXT OUTPUT IS STRICTLY FORBIDDEN TO INCLUDE ════
+  ✗ Cargo.toml
+  ✗ Rust code blocks
+  ✗ Pseudo-calls like functions.write_file(...) or functions.contract_build(...)
+  ✗ Implementation steps or build instructions
+  ✗ Any text after the single confirmation sentence
+
+3. CREATE — TOOL CALLS ONLY. Do NOT output any code or commands as text.
+   - Call contract_init(contractName="<snake_case_name>") — only if not yet initialized
+   - Call write_file to write the contract src/lib.rs implementation
+   - Call write_file to write the contract Cargo.toml
+   - NEVER describe what you will do — call the tools directly
 
 4. BUILD — Run contract_build. If it fails:
    - Read the full STDERR carefully — Rust errors are precise
@@ -37,6 +70,13 @@ IMPORTANT: After producing the diagram, ALWAYS call update_project_spec with a f
    - Test happy paths, edge cases, and error conditions
    - Run run_cargo_test to verify all tests pass
    - Fix any failing tests
+
+MAINTENANCE / ITERATION (after initial build+test):
+- When user asks to add/remove/edit behavior, update existing files in place.
+- Read current files first (read_file) before large edits.
+- Use write_file to modify contract code and tests (do not just describe diffs).
+- Re-run contract_build and run_cargo_test after modifications.
+- If build/tests fail, keep iterating with write_file until green or after 3 failed attempts report exact blocker.
 
 6. DEPLOY — Use rpc_get_latest_ledger to verify connectivity, then contract_deploy
 
@@ -106,7 +146,7 @@ soroban-sdk = { version = "22", features = ["testutils"] }
 Contract boilerplate:
 \`\`\`rust
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Env, Address, Symbol, symbol_short, log};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, symbol_short};
 
 #[contracttype]
 pub enum DataKey { Initialized, Admin, Balance(Address) }
@@ -130,6 +170,13 @@ impl MyContract {
     }
 }
 \`\`\`
+
+Soroban numeric types:
+- Use Rust primitives (i128, u128, i64, etc.), not non-existent SDK aliases like I128.
+- symbol_short! values must be <= 9 characters.
+- If you reference DataKey::X, ensure X is declared in the DataKey enum.
+- NEVER leave the default scaffold hello contract (\`pub fn hello(...)\` with "Hello") when user requested another contract.
+- Keep soroban_sdk imports minimal; NEVER generate huge panic_/unwrap_ import lists or duplicated imports.
 
 Test structure:
 \`\`\`rust
@@ -189,6 +236,8 @@ Check oz-setup-stellar.md and oz-develop-secure.md in the knowledge base for ful
 - Use search_docs BEFORE writing any contract code — look up the specific pattern needed
 - Use list_dir to understand workspace structure before making edits
 - After contract_build fails: read the FULL stderr — Rust errors point to exact line numbers
+- NEVER spam contract_build repeatedly on the same error output.
+- After a build/test failure, you MUST call read_file + write_file to fix code before rerunning build/tests.
 - contract_invoke args must be a flat array: ["--to", "GABC...", "--amount", "100"]
 - Use rpc_get_latest_ledger to confirm network connectivity before deploying
 - Use get_doc to retrieve full documentation files when search_docs gives partial results
@@ -229,6 +278,8 @@ export function buildSystemPrompt(
   ragStore: RAGStore,
   workspaceDir: string,
   projectSpec?: string,
+  phase?: 'design' | 'code',
+  agentMode: 'contract' | 'ui' = 'contract',
 ): string {
   const allSkillDocs = ragStore.getSkillDocs();
 
@@ -262,9 +313,18 @@ export function buildSystemPrompt(
   const workspaceSection = `\n<session_workspace>\nYour working directory for all file operations and CLI commands is: ${workspaceDir}\nAll file paths you use must be relative to this directory.\n</session_workspace>`;
 
   // When a spec exists the IDEATE+DIAGRAM stages are already complete.
-  // Tell the model explicitly so it jumps straight to CREATE rather than re-designing.
+  // Strip mermaid blocks before injecting — MiniMax returns an empty completion when it
+  // sees ```mermaid anywhere in context (system prompt OR history) and the next user
+  // message is not a design request. Replace with a placeholder so the model knows a
+  // diagram exists without seeing the raw syntax that triggers design-mode stalling.
+  // Inject a minimal signal only — never inject the raw spec content.
+  // MiniMax returns empty response when its context contains design-phase markers
+  // (mermaid blocks, "Stage N: IDEATE/DIAGRAM", code blocks, etc.) that appear
+  // anywhere in the prompt. The spec content is shown to the user in the Spec panel;
+  // the model gets the contract requirements from the message history (user's original
+  // request) and this brief "design complete" directive.
   const specSection = projectSpec?.trim()
-    ? `\n\n<project_specification>\n${projectSpec.trim()}\n</project_specification>`
+    ? `\n\n<project_specification>\n[Contract architecture designed and saved to Spec panel.]\n\nCURRENT STAGE: CODE ITERATION. Architecture design is COMPLETE.\nDO NOT output IDEATE, DIAGRAM, or any stage headers as text.\nDO NOT write Rust code or Cargo.toml as text — use write_file tool.\nIf this is the initial implementation, follow: contract_init (only once if not done) → write_file src/lib.rs → write_file Cargo.toml → contract_build → run_cargo_test.\nIf this is a follow-up change request, edit existing files and tests, then run contract_build and run_cargo_test again.\nSuccessful tools from earlier turns do NOT block re-running them when needed for new edits.\n</project_specification>`
     : '';
 
   // Agentic payments section — injected when wallet is configured
@@ -293,5 +353,57 @@ ${MPP_ENABLED ? `This agent's own /chat endpoint is also MPP-gated: clients must
 </agentic_payments>`
     : '';
 
-  return STATIC_RULES + workspaceSection + specSection + walletSection + '\n\n' + docsSection;
+  // In design phase, inject a hard-stop gate BEFORE the skill docs.
+  // This overrides the full workflow stages and tells the model it is locked to DIAGRAM only.
+  // Without this gate, models like MiniMax read stages 3-7 and try to execute them as text output
+  // (outputting pseudo-calls like functions.write_file(...) even though the tools are hidden).
+  const designModeSection = (phase === 'design' || !projectSpec?.trim())
+    ? `\n\n<current_mode>
+DESIGN MODE — you are on stage 2 (DIAGRAM) ONLY.
+
+PERMITTED action: call update_project_spec once with the 4-section spec document, then output the single confirmation sentence. Then STOP COMPLETELY.
+
+FORBIDDEN in this mode — do NOT reference, output, or pretend to call:
+  contract_init · write_file · contract_build · run_cargo_test · contract_deploy · contract_invoke
+
+Do NOT output Cargo.toml. Do NOT output Rust code. Do NOT output implementation steps.
+Do NOT write pseudo-function-calls like functions.write_file({...}) or functions.contract_build({...}).
+After the confirmation sentence, generate NO further output. The user must click Accept to proceed.
+</current_mode>`
+    : '';
+
+  const uiModeSection = `\n\n<ui_mode>
+You are operating as a UI engineering agent.
+Primary goal: build production-ready frontend UI from reusable modular components, not one-off generated blobs.
+
+Rules:
+- Prefer creating composable components in shared UI folders.
+- Keep styling customizable via props/className/tokens.
+- Update existing files when possible; avoid duplicate components.
+- For feature requests, implement actual code via write_file/read_file/list_dir tools.
+- Do not generate contracts or Soroban code unless explicitly requested.
+- For app frontend requests: build pages, forms, layout, interactions, and API wiring.
+</ui_mode>`;
+
+  let systemPrompt =
+    (agentMode === 'ui' ? STATIC_RULES.replace(/<role>[\s\S]*?<\/role>/, `<role>
+You are an expert frontend product engineer and UI architect. You build modular, customizable app frontends using reusable components and clean state patterns. You execute using tools; do not just describe.
+</role>`) : STATIC_RULES)
+    + workspaceSection
+    + (agentMode === 'contract' ? specSection + designModeSection : '')
+    + (agentMode === 'ui' ? uiModeSection : '')
+    + walletSection
+    + '\n\n'
+    + docsSection;
+
+  // When the design phase is complete (spec is set), strip ALL mermaid code blocks from
+  // the entire system prompt — STATIC_RULES diagram example, knowledge-base doc diagrams, etc.
+  // MiniMax returns empty response when its context contains ```mermaid syntax AND the
+  // conversation history shows a completed design phase. First message works because there
+  // is no design history yet; subsequent messages stall until the mermaid examples are gone.
+  if (projectSpec?.trim()) {
+    systemPrompt = systemPrompt.replace(/```mermaid[\s\S]*?```/g, '[diagram omitted — see Spec panel]');
+  }
+
+  return systemPrompt;
 }

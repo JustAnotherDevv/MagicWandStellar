@@ -6,7 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
-import { Send, Square, Loader2, ChevronDown, ChevronRight, Terminal, Wrench } from 'lucide-react'
+import { Send, Square, Loader2, ChevronDown, ChevronRight, Terminal, Wrench, CheckCircle, PencilLine } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
@@ -16,12 +16,13 @@ import { MermaidBlock } from '@/components/MermaidBlock'
 export function ChatPanel() {
   const wallet = useStore((s) => s.wallet)
   const activeProject = useStore((s) => s.activeProject())
-  const projects = useStore((s) => s.projects)
   const chat = useStore((s) => s.chat)
   const sessions = useStore((s) => s.sessions)
   const setSessions = useStore((s) => s.setSessions)
   const setProjects = useStore((s) => s.setProjects)
   const setSpecDraft = useStore((s) => s.setSpecDraft)
+  const setPanelView = useStore((s) => s.setPanelView)
+  const signalFileWritten = useStore((s) => s.signalFileWritten)
   const {
     appendMessage,
     updateStreamingText,
@@ -32,27 +33,20 @@ export function ChatPanel() {
     setChatError,
     finalizeStream,
     resetChat,
+    setSpecNeedsApproval,
   } = useStore((s) => s)
   const appendLog = useStore((s) => s.appendLog)
+  const setChatAgentMode = useStore((s) => s.setChatAgentMode)
 
   const [input, setInput] = useState('')
+  const [acceptingSpec, setAcceptingSpec] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Auto-scroll
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [chat.messages, chat.streamingText])
-
-  // Reset chat when project changes (already done in store but guard here too)
-  useEffect(() => {
-    // nothing needed — store handles it
-  }, [activeProject?.id])
-
-  const sendMessage = useCallback(async () => {
-    const text = input.trim()
-    if (!text || chat.isStreaming || !activeProject) return
-    setInput('')
+  // Core streaming helper — sends a message and processes SSE events.
+  // Extracted so both sendMessage and handleAcceptSpec can share the same logic.
+  const sendText = useCallback(async (text: string, sessionIdOverride?: string) => {
+    if (!activeProject) return
 
     const userMsg: ChatMessage = {
       role: 'user',
@@ -74,9 +68,10 @@ export function ChatPanel() {
         {
           userId: wallet.publicKey!,
           projectId: activeProject.id,
-          sessionId: chat.sessionId ?? undefined,
+          sessionId: sessionIdOverride ?? chat.sessionId ?? undefined,
           message: text,
           network: wallet.network as 'testnet' | 'mainnet',
+          agentMode: chat.agentMode,
         },
         ac.signal,
       )
@@ -85,7 +80,6 @@ export function ChatPanel() {
         if (event.type === 'session_created') {
           setSessionId(event.sessionId)
           appendLog(`[session] created ${event.sessionId}`)
-          // Refresh sessions list
           api.getSessions(wallet.publicKey!, activeProject.id)
             .then((s) => setSessions(s))
             .catch(() => {})
@@ -93,6 +87,10 @@ export function ChatPanel() {
           currentText += event.text
           updateStreamingText(currentText)
         } else if (event.type === 'tool_use') {
+          // Switch to code panel as soon as write_file starts so the user sees it live
+          if (event.toolName === 'write_file') {
+            setPanelView('code')
+          }
           const toolEvent = {
             id: event.toolUseId,
             name: event.toolName,
@@ -102,8 +100,17 @@ export function ChatPanel() {
           currentTools = [...currentTools, toolEvent]
           updateStreamingToolUses(currentTools)
           appendLog(`[tool] ${event.toolName} — running`)
+        } else if (event.type === 'file_written') {
+          // Reliable file-written signal — emitted after successful write_file with full content.
+          // 1. Triggers the live reveal animation in CodePanel.
+          signalFileWritten(event.path, event.content)
+          // 2. Refresh file tree — write direct to store state so CodePanel sees the update.
+          if (activeProject) {
+            api.getFiles(activeProject.id)
+              .then((result) => useStore.setState({ files: result }))
+              .catch(() => {})
+          }
         } else if (event.type === 'tool_result') {
-          // Update the matching pending tool's status
           currentTools = currentTools.map((t) =>
             t.id === event.toolUseId
               ? { ...t, status: (event.isError ? 'error' : 'success') as 'success' | 'error', result: event.result }
@@ -112,13 +119,14 @@ export function ChatPanel() {
           updateStreamingToolUses(currentTools)
           appendLog(`[tool_result] ${event.toolUseId.slice(0, 8)} — ${event.isError ? 'error' : 'ok'}`)
         } else if (event.type === 'spec_updated') {
-          // Update spec in the active project so SpecPanel refreshes live
           if (activeProject) {
-            setProjects(projects.map((p) =>
+            setProjects(useStore.getState().projects.map((p) =>
               p.id === activeProject.id ? { ...p, spec: event.spec } : p
             ))
             setSpecDraft(event.spec)
           }
+        } else if (event.type === 'needs_approval') {
+          setSpecNeedsApproval(true)
         } else if (event.type === 'done') {
           const assistantMsg: ChatMessage = {
             role: 'assistant',
@@ -144,7 +152,46 @@ export function ChatPanel() {
       }
       finalizeStream(null)
     }
-  }, [input, chat.isStreaming, chat.sessionId, activeProject, wallet])
+  }, [chat.sessionId, chat.agentMode, activeProject, wallet, setPanelView, signalFileWritten])
+
+  const sendMessage = useCallback(async () => {
+    const text = input.trim()
+    if (!text || chat.isStreaming) return
+    setInput('')
+    await sendText(text)
+  }, [input, chat.isStreaming, sendText])
+
+  const handleAcceptSpec = useCallback(async () => {
+    if (!chat.sessionId || chat.isStreaming) return
+    setAcceptingSpec(true)
+    try {
+      await api.acceptSpec(chat.sessionId)
+      setSpecNeedsApproval(false)
+      // Update project phase in store so approval banner disappears immediately
+      const pid = useStore.getState().activeProjectId
+      if (pid) {
+        setProjects(useStore.getState().projects.map((p) =>
+          p.id === pid ? { ...p, phase: 'code' as const } : p
+        ))
+      }
+      appendLog('[spec] accepted — switching to code phase')
+    } catch (err: any) {
+      appendLog(`[spec] accept failed — ${err?.message}`)
+      setAcceptingSpec(false)
+      return
+    }
+    setAcceptingSpec(false)
+    // Immediately trigger implementation — user clicked Accept, start coding now
+    await sendText(
+      'Implement the full contract code as described in the approved spec.',
+      chat.sessionId,
+    )
+  }, [chat.sessionId, chat.isStreaming, setProjects, setSpecNeedsApproval, appendLog, sendText])
+
+  const handleEditSpec = useCallback(() => {
+    setSpecNeedsApproval(false)
+    appendLog('[spec] edit requested — staying in design phase')
+  }, [setSpecNeedsApproval, appendLog])
 
   const handleStop = () => {
     chat.abortController?.abort()
@@ -168,7 +215,7 @@ export function ChatPanel() {
   return (
     <div className="flex flex-col h-full">
       {/* Session info */}
-      <div className="px-4 py-2 border-b border-white/[0.06] flex items-center gap-2 shrink-0">
+      <div className="px-4 py-2 border-b-2 border-[rgba(245,234,216,0.08)] flex items-center gap-2 shrink-0">
         <span className="text-[11px] text-ink-muted">
           {chat.sessionId ? (
             <>Session: <span className="font-mono text-ink-muted/70">{chat.sessionId.slice(0, 12)}…</span></>
@@ -177,11 +224,37 @@ export function ChatPanel() {
         {chat.sessionId && (
           <button
             onClick={resetChat}
-            className="text-[10px] text-ink-muted hover:text-ink ml-auto"
+            className="text-[10px] text-ink-muted hover:text-ink"
           >
             New chat
           </button>
         )}
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={() => setChatAgentMode('contract')}
+            className={cn(
+              'text-[10px] px-2 py-1 rounded border',
+              chat.agentMode === 'contract'
+                ? 'border-accent/60 text-ink bg-accent/10'
+                : 'border-white/10 text-ink-muted hover:text-ink',
+            )}
+            disabled={chat.isStreaming}
+          >
+            Contract Agent
+          </button>
+          <button
+            onClick={() => setChatAgentMode('ui')}
+            className={cn(
+              'text-[10px] px-2 py-1 rounded border',
+              chat.agentMode === 'ui'
+                ? 'border-accent/60 text-ink bg-accent/10'
+                : 'border-white/10 text-ink-muted hover:text-ink',
+            )}
+            disabled={chat.isStreaming}
+          >
+            UI Agent
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -194,6 +267,37 @@ export function ChatPanel() {
           <MessageBubble key={i} message={msg} />
         ))}
 
+        {/* Spec approval banner — shown whenever spec exists and project is still in design phase.
+            Uses phase from the project (persistent across refresh) OR the ephemeral SSE flag. */}
+        {!chat.isStreaming && (chat.specNeedsApproval || (activeProject?.phase === 'design' && !!activeProject?.spec?.trim())) && (
+          <div className="mb-4 rounded-2xl border-2 border-accent/40 bg-accent/5 px-4 py-4">
+            <p className="text-sm font-semibold text-ink mb-1">Spec ready for review</p>
+            <p className="text-[12px] text-ink-muted mb-3">
+              Review the spec in the Spec panel. Accept to start implementing, or continue editing.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={handleAcceptSpec}
+                disabled={acceptingSpec}
+                className="gap-1.5"
+              >
+                {acceptingSpec ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle size={12} />}
+                Accept & Start Coding
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleEditSpec}
+                className="gap-1.5"
+              >
+                <PencilLine size={12} />
+                Keep Editing
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Streaming response */}
         {chat.isStreaming && (
           <div className="mb-3">
@@ -201,7 +305,7 @@ export function ChatPanel() {
               <ToolUsesBlock tools={chat.streamingToolUses} />
             )}
             {chat.streamingText && (
-              <div className="rounded bg-bg-surface border border-white/[0.06] px-4 py-3">
+              <div className="rounded-2xl bg-bg-surface border-2 border-[rgba(245,234,216,0.08)] px-4 py-3">
                 <div className="prose-dark text-sm">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {chat.streamingText}
@@ -221,7 +325,7 @@ export function ChatPanel() {
 
         {/* Error */}
         {chat.error && (
-          <div className="mb-3 px-4 py-3 rounded bg-status-error/10 border border-status-error/20 text-status-error text-sm">
+          <div className="mb-3 px-4 py-3 rounded-2xl bg-status-error/10 border-2 border-status-error/30 text-status-error text-sm font-semibold">
             {chat.error}
           </div>
         )}
@@ -230,14 +334,16 @@ export function ChatPanel() {
       </ScrollArea>
 
       {/* Input */}
-      <div className="px-4 pb-4 pt-2 border-t border-white/[0.06] shrink-0">
+      <div className="px-4 pb-4 pt-2 border-t-2 border-[rgba(245,234,216,0.08)] shrink-0">
         <div className="relative">
           <Textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Describe the smart contract you want to build…"
+            placeholder={chat.agentMode === 'ui'
+              ? 'Describe the frontend UI you want (screens, components, styling)...'
+              : 'Describe the smart contract you want to build…'}
             className="pr-12 min-h-[72px] max-h-48"
             disabled={chat.isStreaming}
           />
@@ -258,8 +364,8 @@ export function ChatPanel() {
           </div>
         </div>
         <p className="text-[10px] text-ink-muted mt-1.5">
-          <kbd className="bg-bg-elevated px-1 rounded text-[9px]">Enter</kbd> to send &nbsp;·&nbsp;
-          <kbd className="bg-bg-elevated px-1 rounded text-[9px]">Shift+Enter</kbd> for newline
+          <kbd className="bg-bg-elevated px-1.5 rounded-full text-[9px] font-bold border border-[rgba(245,234,216,0.12)]">Enter</kbd> to send &nbsp;·&nbsp;
+          <kbd className="bg-bg-elevated px-1.5 rounded-full text-[9px] font-bold border border-[rgba(245,234,216,0.12)]">Shift+Enter</kbd> for newline
         </p>
       </div>
     </div>
@@ -268,42 +374,46 @@ export function ChatPanel() {
 
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user'
+  const hasTextContent = !!String(message.content ?? '').trim()
 
   return (
     <div className={cn('mb-4', isUser ? 'flex justify-end' : '')}>
       {!isUser && message.toolUses && message.toolUses.length > 0 && (
         <ToolUsesBlock tools={message.toolUses} />
       )}
-      <div
-        className={cn(
-          'rounded px-4 py-3 text-sm max-w-[85%]',
-          isUser
-            ? 'bg-accent/10 border border-accent/20 text-ink ml-auto'
-            : 'bg-bg-surface border border-white/[0.06] text-ink',
-        )}
-      >
-        {isUser ? (
-          <p className="whitespace-pre-wrap">{message.content as string}</p>
-        ) : (
-          <div className="prose-dark">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                code({ className, children, ...props }: any) {
-                  const lang = /language-(\w+)/.exec(className || '')?.[1]
-                  if (lang === 'mermaid') {
-                    return <MermaidBlock code={String(children).trim()} />
-                  }
-                  return <code className={className} {...props}>{children}</code>
-                },
-              }}
-            >
-              {message.content as string}
-            </ReactMarkdown>
-          </div>
-        )}
-      </div>
+      {/* Skip empty content bubbles — happens when model only makes tool calls with no text */}
+      {(isUser || hasTextContent) && (
+        <div
+          className={cn(
+            'rounded-2xl px-4 py-3 text-sm max-w-[85%]',
+            isUser
+              ? 'bg-accent/15 border-2 border-accent/30 text-ink ml-auto shadow-hard-sm font-semibold'
+              : 'bg-bg-surface border-2 border-[rgba(245,234,216,0.08)] text-ink',
+          )}
+        >
+          {isUser ? (
+            <p className="whitespace-pre-wrap">{message.content as string}</p>
+          ) : (
+            <div className="prose-dark">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  code({ className, children, ...props }: any) {
+                    const lang = /language-(\w+)/.exec(className || '')?.[1]
+                    if (lang === 'mermaid') {
+                      return <MermaidBlock code={String(children).trim()} />
+                    }
+                    return <code className={className} {...props}>{children}</code>
+                  },
+                }}
+              >
+                {message.content as string}
+              </ReactMarkdown>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -312,7 +422,7 @@ function ToolUsesBlock({ tools }: { tools: ToolUseEvent[] }) {
   const [expanded, setExpanded] = useState(false)
 
   return (
-    <div className="mb-2 rounded border border-white/[0.06] bg-bg-panel text-[11px]">
+    <div className="mb-2 rounded-2xl border-2 border-[rgba(245,234,216,0.10)] bg-bg-panel text-[11px] overflow-hidden">
       <button
         onClick={() => setExpanded((v) => !v)}
         className="w-full flex items-center gap-2 px-3 py-2 text-ink-muted hover:text-ink transition-colors"
@@ -322,7 +432,7 @@ function ToolUsesBlock({ tools }: { tools: ToolUseEvent[] }) {
         {expanded ? <ChevronDown size={11} className="ml-auto" /> : <ChevronRight size={11} className="ml-auto" />}
       </button>
       {expanded && (
-        <div className="border-t border-white/[0.06] divide-y divide-white/[0.04]">
+        <div className="border-t-2 border-[rgba(245,234,216,0.08)] divide-y divide-[rgba(245,234,216,0.05)]">
           {tools.map((t, i) => (
             <div key={i} className="px-3 py-2 flex items-center gap-2">
               <Terminal size={10} className="text-ink-muted shrink-0" />
@@ -359,7 +469,7 @@ function WelcomePrompts({
 
   return (
     <div className="py-6 text-center">
-      <h3 className="text-sm font-medium text-ink mb-1">{project.name}</h3>
+      <h3 className="text-sm font-extrabold text-ink mb-1">{project.name}</h3>
       <p className="text-[12px] text-ink-muted mb-5">
         Describe a Soroban smart contract to get started
       </p>
@@ -368,7 +478,7 @@ function WelcomePrompts({
           <button
             key={p}
             onClick={() => onSelect(p)}
-            className="px-3 py-2.5 rounded border border-white/[0.06] bg-bg-surface text-[12px] text-ink-muted hover:text-ink hover:border-accent/30 hover:bg-accent/5 text-left transition-colors duration-100"
+            className="px-4 py-3 rounded-2xl border-2 border-[rgba(245,234,216,0.10)] bg-bg-surface text-[12px] font-semibold text-ink-muted hover:text-ink hover:border-accent/40 hover:bg-accent/5 text-left transition-colors duration-100 shadow-hard-sm"
           >
             {p}
           </button>

@@ -7,12 +7,24 @@ export interface Project {
   userId: string
   name: string
   spec: string
+  phase: 'design' | 'code'
   network: string
   workspaceDir: string
   createdAt: number
   updatedAt: number
   contractCount?: number
+  appName?: string
+  appDescription?: string
+  appTags?: string
+  appLogoUrl?: string
+  appBannerUrl?: string
+  appRuntimeUrl?: string
+  appLikeCount?: number
+  appDislikeCount?: number
+  appPublishedAt?: number | null
 }
+
+export type ChatAgentMode = 'contract' | 'ui'
 
 export interface SessionSummary {
   id: string
@@ -64,7 +76,9 @@ export type SSEEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_use'; toolName: string; toolUseId: string; input: unknown }
   | { type: 'tool_result'; toolUseId: string; result: string; isError: boolean }
+  | { type: 'file_written'; path: string; content: string }
   | { type: 'spec_updated'; spec: string }
+  | { type: 'needs_approval' }
   | { type: 'done'; usage: { inputTokens: number; outputTokens: number } | null }
   | { type: 'error'; message: string }
 
@@ -98,4 +112,11 @@ export interface Stats {
 export interface BuildResult {
   success: boolean
   output: string
+}
+
+export interface ContractFunctionAbi {
+  name: string
+  params: Array<{ name: string; type: string }>
+  returnType?: string
+  isReadOnly: boolean
 }

@@ -83,9 +83,12 @@ export async function contractInit(
       30_000,
     );
     const output = formatOutput(stdout, stderr, exitCode);
-    // On success, tell the agent where the project was scaffolded
+    if (exitCode === 0) {
+      // Remember the contract subdir so write_file resolves paths relative to it
+      session.contractDir = slug;
+    }
     const result = exitCode === 0
-      ? `Initialized contract project at: ${slug}/\n\n${output}`
+      ? `Initialized contract project at: ${slug}/\n\nAll subsequent write_file paths should be relative to this directory (e.g. "contracts/${slug}/src/lib.rs").\n\n${output}`
       : output;
     return {
       content: result,

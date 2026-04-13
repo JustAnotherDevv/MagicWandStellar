@@ -42,7 +42,7 @@ projectsRouter.post('/', (req: Request, res: Response) => {
     id,
     userId,
     name: name.trim(),
-    network: (network ?? 'testnet') as 'testnet' | 'mainnet',
+    network: (network ?? 'testnet') as 'testnet' | 'mainnet' | 'futurenet' | 'local',
     workspaceDir,
   });
 
@@ -76,11 +76,73 @@ projectsRouter.patch('/:id', (req: Request, res: Response) => {
     return;
   }
 
-  const { spec } = req.body as { spec?: string };
+  const {
+    spec,
+    appName,
+    appDescription,
+    appTags,
+    appLogoUrl,
+    appBannerUrl,
+    appRuntimeUrl,
+    appLikeCount,
+    appDislikeCount,
+    appPublishedAt,
+  } = req.body as {
+    spec?: string;
+    appName?: string;
+    appDescription?: string;
+    appTags?: string;
+    appLogoUrl?: string;
+    appBannerUrl?: string;
+    appRuntimeUrl?: string;
+    appLikeCount?: number;
+    appDislikeCount?: number;
+    appPublishedAt?: number | null;
+  };
   if (spec !== undefined) {
     db.updateProjectSpec(id, spec);
   }
+  if (
+    appName !== undefined ||
+    appDescription !== undefined ||
+    appTags !== undefined ||
+    appLogoUrl !== undefined ||
+    appBannerUrl !== undefined ||
+    appRuntimeUrl !== undefined ||
+    appLikeCount !== undefined ||
+    appDislikeCount !== undefined ||
+    appPublishedAt !== undefined
+  ) {
+    db.updateProjectApp(id, {
+      appName,
+      appDescription,
+      appTags,
+      appLogoUrl,
+      appBannerUrl,
+      appRuntimeUrl,
+      appLikeCount,
+      appDislikeCount,
+      appPublishedAt,
+    });
+  }
 
+  res.json(db.getProject(id));
+});
+
+// POST /projects/:id/reaction
+projectsRouter.post('/:id/reaction', (req: Request, res: Response) => {
+  const id = req.params['id'] as string;
+  const project = db.getProject(id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  const { type } = req.body as { type?: 'like' | 'dislike' };
+  if (type !== 'like' && type !== 'dislike') {
+    res.status(400).json({ error: 'type must be like or dislike' });
+    return;
+  }
+  db.reactToProjectApp(id, type);
   res.json(db.getProject(id));
 });
 

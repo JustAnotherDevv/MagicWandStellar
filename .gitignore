@@ -22,6 +22,15 @@ data/
 # ── Agent workspaces (generated per-session contract code) ────────────────────
 workspaces/
 
+# ── Compiled TypeScript output (in-place, no outDir set) ─────────────────────
+src/**/*.js
+src/**/*.d.ts
+tests/helpers/*.js
+
+# ── Scripts compiled output & scratch ────────────────────────────────────────
+scripts/*.js
+scripts/manual-fix-*.ts
+
 # ── Debug / scratch scripts (root-level .mts files used during development) ───
 *.mts
 

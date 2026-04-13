@@ -52,11 +52,11 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="w-56 flex flex-col bg-bg-panel border-r border-white/[0.06] shrink-0">
+    <aside className="w-56 flex flex-col bg-bg-panel border-r-2 border-[rgba(245,234,216,0.10)] shrink-0">
       {/* Header */}
       <div className="px-3 pt-3 pb-2">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-semibold text-ink-muted uppercase tracking-widest">
+          <span className="text-[11px] font-extrabold text-ink-muted uppercase tracking-widest">
             Projects
           </span>
           <Button
@@ -77,7 +77,7 @@ export function Sidebar() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search…"
-            className="pl-7 h-7 text-[11px]"
+            className="pl-7 h-8 text-[11px] rounded-2xl"
           />
           {search && (
             <button
@@ -184,7 +184,7 @@ function ProjectItem({
         </p>
       </div>
       {active && (
-        <div className="ml-auto w-1 h-1 rounded-full bg-accent shrink-0 mt-1.5" />
+        <div className="ml-auto w-1.5 h-1.5 rounded-full bg-accent shrink-0 mt-1.5 shadow-[0_0_6px_rgba(232,48,48,0.8)]" />
       )}
     </button>
   )

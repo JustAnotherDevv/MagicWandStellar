@@ -21,7 +21,7 @@ export const DEFAULT_THINKING_BUDGET = parseInt(
 export const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY ?? '';
 export const MINIMAX_BASE_URL = 'https://api.minimax.io/v1';
 // MiniMax model name — can be overridden via env
-export const MODEL = process.env.MODEL ?? 'MiniMax-Text-01';
+export const MODEL = process.env.MODEL ?? 'MiniMax-M2.7';
 
 // ── Stellar agent wallet ──────────────────────────────────────────────────────
 export const STELLAR_SECRET_KEY = process.env.STELLAR_SECRET_KEY ?? '';

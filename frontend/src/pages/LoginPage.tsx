@@ -55,24 +55,24 @@ export function LoginPage() {
     <div className="min-h-screen bg-bg flex flex-col items-center justify-center px-4">
       {/* Background grid */}
       <div
-        className="fixed inset-0 pointer-events-none opacity-[0.03]"
+        className="fixed inset-0 pointer-events-none opacity-[0.04]"
         style={{
-          backgroundImage: 'linear-gradient(rgba(240,115,24,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(240,115,24,0.4) 1px, transparent 1px)',
+          backgroundImage: 'linear-gradient(rgba(232,48,48,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(232,48,48,0.5) 1px, transparent 1px)',
           backgroundSize: '60px 60px',
         }}
       />
 
       {/* Glow */}
-      <div className="fixed top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-accent/5 rounded-full blur-[120px] pointer-events-none" />
+      <div className="fixed top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-accent/8 rounded-full blur-[100px] pointer-events-none" />
 
       <div className="relative z-10 flex flex-col items-center max-w-sm w-full">
         {/* Logo */}
         <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-[0_0_40px_rgba(240,115,24,0.2)]">
+          <div className="w-24 h-24 rounded-3xl overflow-hidden shadow-hard border-2 border-[rgba(245,234,216,0.15)]">
             <img src="/logo.png" alt="MagicWand" className="w-full h-full object-cover" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold text-ink tracking-tight">
+            <h1 className="text-3xl font-extrabold text-ink tracking-tight">
               Magic<span className="text-accent">Wand</span>
             </h1>
             <p className="text-[13px] text-ink-muted mt-1">
@@ -82,7 +82,7 @@ export function LoginPage() {
         </div>
 
         {/* Card */}
-        <div className="w-full rounded-xl border border-white/[0.08] bg-bg-panel p-6 shadow-2xl">
+        <div className="w-full rounded-3xl border-2 border-[rgba(245,234,216,0.12)] bg-bg-panel p-6 shadow-hard">
           <h2 className="text-[13px] font-semibold text-ink mb-1">Connect your wallet</h2>
           <p className="text-[12px] text-ink-muted mb-5">
             Sign in with Freighter to access your projects and deploy contracts on Stellar.
@@ -99,12 +99,12 @@ export function LoginPage() {
                   key={n}
                   onClick={() => setNetwork(n)}
                   className={`
-                    px-3 py-2 rounded border text-[12px] font-medium capitalize transition-all duration-100
+                    px-3 py-2 rounded-2xl border-2 text-[12px] font-bold capitalize transition-all duration-100
                     ${network === n
                       ? n === 'mainnet'
                         ? 'bg-status-success/10 border-status-success/30 text-status-success'
                         : 'bg-accent/10 border-accent/30 text-accent'
-                      : 'border-white/[0.08] text-ink-muted hover:border-white/20 hover:text-ink'
+                      : 'border-[rgba(245,234,216,0.12)] text-ink-muted hover:border-[rgba(245,234,216,0.25)] hover:text-ink'
                     }
                   `}
                 >
@@ -149,7 +149,7 @@ export function LoginPage() {
                 href="https://freighter.app"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 w-full h-9 px-4 rounded bg-accent text-white text-sm font-medium hover:bg-accent-bright transition-colors shadow-[0_0_12px_rgba(240,115,24,0.2)]"
+                className="flex items-center justify-center gap-2 w-full h-10 px-4 rounded-full bg-accent text-white text-sm font-bold hover:bg-accent-bright transition-colors shadow-hard border-2 border-black/20"
               >
                 <ExternalLink size={13} />
                 Install Freighter
@@ -165,8 +165,8 @@ export function LoginPage() {
             { label: 'App Store', desc: 'Publish, discover & monetize apps' },
             { label: 'x402 / MPP', desc: 'AI-native Stellar micropayments' },
           ].map((f) => (
-            <div key={f.label} className="rounded-lg border border-white/[0.06] bg-bg-panel/50 p-3">
-              <p className="text-[11px] font-semibold text-ink mb-0.5">{f.label}</p>
+            <div key={f.label} className="rounded-2xl border-2 border-[rgba(245,234,216,0.10)] bg-bg-panel/50 p-3 shadow-hard-sm">
+              <p className="text-[11px] font-extrabold text-ink mb-0.5">{f.label}</p>
               <p className="text-[10px] text-ink-muted leading-tight">{f.desc}</p>
             </div>
           ))}
