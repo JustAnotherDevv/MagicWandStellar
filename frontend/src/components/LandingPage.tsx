@@ -1,7 +1,7 @@
-import { useRef } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import { motion, AnimatePresence, useInView, type Variants } from 'framer-motion'
 import { useStore } from '@/store'
-import { X, Sparkles, Zap, Store, Rocket, ArrowRight, Code2, Wallet } from 'lucide-react'
+import { X, Sparkles, Zap, Store, Rocket, ArrowRight, Code2, Wallet, Copy, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // ── Animation variants ────────────────────────────────────────────────────
@@ -79,6 +79,15 @@ function ImagePlaceholder({
   aspect?: 'video' | 'square' | 'portrait' | 'wide'
   className?: string
 }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(prompt).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }, [prompt])
+
   const ratios: Record<string, string> = {
     video:   'aspect-video',
     square:  'aspect-square',
@@ -88,7 +97,7 @@ function ImagePlaceholder({
 
   return (
     <div className={cn(
-      'relative rounded-3xl overflow-hidden border border-border bg-bg-elevated group',
+      'relative rounded-3xl overflow-hidden border border-border bg-bg-elevated group cursor-default',
       ratios[aspect],
       className,
     )}>
@@ -102,34 +111,38 @@ function ImagePlaceholder({
         }}
       />
 
-      {/* Hover: reveal prompt */}
-      <motion.div
-        className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-bg/80 backdrop-blur-sm"
-        initial={{ opacity: 0 }}
-        whileHover={{ opacity: 1 }}
-        transition={{ duration: 0.18 }}
-      >
+      {/* Prompt overlay — hidden by default, revealed on parent hover */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-bg/80 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200">
         <Sparkles size={20} className="text-accent mb-3" />
         <p className="text-[10px] font-bold text-ink-muted uppercase tracking-widest mb-2 text-center">
           AI Image Prompt
         </p>
-        <p className="text-[11px] text-ink text-center leading-relaxed">{prompt}</p>
-      </motion.div>
+        <p className="text-[11px] text-ink text-center leading-relaxed mb-4">{prompt}</p>
 
-      {/* Default: placeholder icon */}
-      <motion.div
-        className="absolute inset-0 flex items-center justify-center"
-        initial={{ opacity: 1 }}
-        whileHover={{ opacity: 0 }}
-        transition={{ duration: 0.18 }}
-      >
+        <motion.button
+          onClick={handleCopy}
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-colors duration-150',
+            copied
+              ? 'border-status-success/40 bg-status-success/10 text-status-success'
+              : 'border-border bg-bg-panel text-ink-muted hover:text-ink hover:border-border-bright',
+          )}
+          whileTap={{ scale: 0.95 }}
+        >
+          {copied ? <Check size={11} /> : <Copy size={11} />}
+          {copied ? 'Copied!' : 'Copy prompt'}
+        </motion.button>
+      </div>
+
+      {/* Default placeholder — shown by default, hidden on parent hover */}
+      <div className="absolute inset-0 flex items-center justify-center opacity-100 group-hover:opacity-0 transition-opacity duration-200 pointer-events-none">
         <div className="text-center">
           <div className="w-10 h-10 rounded-2xl border-2 border-dashed border-border flex items-center justify-center mx-auto mb-2">
             <Sparkles size={16} className="text-ink-dim" />
           </div>
           <p className="text-[10px] text-ink-dim">hover for prompt</p>
         </div>
-      </motion.div>
+      </div>
     </div>
   )
 }
