@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { LogOut, Activity } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 export function TopBar() {
   const wallet = useStore((s) => s.wallet)
@@ -37,23 +38,23 @@ export function TopBar() {
       <div className="rounded-full border border-white/[0.14] bg-[#15131c] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_6px_18px_rgba(0,0,0,0.35)] flex items-center gap-1">
         <button
           onClick={() => setShellView('build')}
-          className={[
+          className={cn(
             'px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all duration-150',
             shellView === 'build'
               ? 'text-ink bg-gradient-to-b from-[#ffe0a8] to-[#d38f3c] shadow-[0_2px_0_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.45)]'
               : 'text-ink-muted hover:text-ink bg-transparent',
-          ].join(' ')}
+          )}
         >
           Current Build
         </button>
         <button
           onClick={() => setShellView('apps')}
-          className={[
+          className={cn(
             'px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all duration-150',
             shellView === 'apps'
               ? 'text-ink bg-gradient-to-b from-[#ffd0d0] to-[#d95757] shadow-[0_2px_0_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.45)]'
               : 'text-ink-muted hover:text-ink bg-transparent',
-          ].join(' ')}
+          )}
         >
           Apps
         </button>

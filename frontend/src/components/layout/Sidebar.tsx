@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useStore } from '@/store'
 import { api } from '@/lib/api'
 import { timeAgo } from '@/lib/utils'
@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Plus, FolderOpen, Search, X, Loader2 } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
 
 export function Sidebar() {
@@ -24,8 +25,9 @@ export function Sidebar() {
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
 
-  const filtered = projects.filter((p) =>
-    p.name.toLowerCase().includes(search.toLowerCase()),
+  const filtered = useMemo(
+    () => projects.filter((p) => p.name.toLowerCase().includes(search.toLowerCase())),
+    [projects, search],
   )
 
   const handleCreate = async () => {
@@ -44,8 +46,8 @@ export function Sidebar() {
       setShowNew(false)
       setNewName('')
       setNewDesc('')
-    } catch (e: any) {
-      setError(e.message ?? 'Failed to create project')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create project')
     } finally {
       setCreating(false)
     }
@@ -165,17 +167,14 @@ function ProjectItem({
   return (
     <button
       onClick={onClick}
-      className={`
-        w-full text-left px-3 py-2 flex items-start gap-2.5 transition-colors duration-100 group
-        ${active
-          ? 'bg-accent/10 text-ink'
-          : 'text-ink-muted hover:bg-bg-hover hover:text-ink'
-        }
-      `}
+      className={cn(
+        'w-full text-left px-3 py-2 flex items-start gap-2.5 transition-colors duration-100 group',
+        active ? 'bg-accent/10 text-ink' : 'text-ink-muted hover:bg-bg-hover hover:text-ink',
+      )}
     >
       <FolderOpen
         size={13}
-        className={`mt-0.5 shrink-0 ${active ? 'text-accent' : 'text-ink-muted group-hover:text-ink-muted'}`}
+        className={cn('mt-0.5 shrink-0', active ? 'text-accent' : 'text-ink-muted')}
       />
       <div className="min-w-0">
         <p className="text-[12px] font-medium truncate">{project.name}</p>

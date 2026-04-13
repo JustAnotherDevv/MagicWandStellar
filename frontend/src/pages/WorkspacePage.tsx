@@ -12,6 +12,7 @@ import { LogsPanel } from '@/components/panels/LogsPanel'
 import { ContractPanel } from '@/components/panels/ContractPanel'
 import { AppPanel } from '@/components/panels/AppPanel'
 import { LandingPage } from '@/components/LandingPage'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -172,24 +173,24 @@ export function WorkspacePage() {
                     {/* All panels are always mounted — toggled via CSS visibility so
                         Monaco stays initialised and tab switches cause zero layout reflow. */}
                     <div className="relative flex-1 min-h-0 overflow-hidden">
-                      <div className={cn('absolute inset-0', panelView !== 'spec' && panelView !== 'chat' && 'invisible pointer-events-none')}>
-                        <SpecPanel />
-                      </div>
-                      <div className={cn('absolute inset-0', panelView !== 'code' && 'invisible pointer-events-none')}>
-                        <CodePanel />
-                      </div>
-                      <div className={cn('absolute inset-0', panelView !== 'tests' && 'invisible pointer-events-none')}>
-                        <TestsPanel />
-                      </div>
-                      <div className={cn('absolute inset-0', panelView !== 'logs' && 'invisible pointer-events-none')}>
-                        <LogsPanel />
-                      </div>
-                      <div className={cn('absolute inset-0', panelView !== 'contracts' && 'invisible pointer-events-none')}>
-                        <ContractPanel />
-                      </div>
-                      <div className={cn('absolute inset-0', panelView !== 'app' && 'invisible pointer-events-none')}>
-                        <AppPanel />
-                      </div>
+                      <PanelSlot active={panelView === 'spec' || panelView === 'chat'}>
+                        <ErrorBoundary label="Spec"><SpecPanel /></ErrorBoundary>
+                      </PanelSlot>
+                      <PanelSlot active={panelView === 'code'}>
+                        <ErrorBoundary label="Code"><CodePanel /></ErrorBoundary>
+                      </PanelSlot>
+                      <PanelSlot active={panelView === 'tests'}>
+                        <ErrorBoundary label="Tests"><TestsPanel /></ErrorBoundary>
+                      </PanelSlot>
+                      <PanelSlot active={panelView === 'logs'}>
+                        <ErrorBoundary label="Logs"><LogsPanel /></ErrorBoundary>
+                      </PanelSlot>
+                      <PanelSlot active={panelView === 'contracts'}>
+                        <ErrorBoundary label="Contracts"><ContractPanel /></ErrorBoundary>
+                      </PanelSlot>
+                      <PanelSlot active={panelView === 'app'}>
+                        <ErrorBoundary label="App"><AppPanel /></ErrorBoundary>
+                      </PanelSlot>
                     </div>
                   </div>
                 </Panel>
@@ -567,6 +568,16 @@ function AppsStoreView({ onOpenBuild }: { onOpenBuild: (projectId: string) => vo
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+/** Wraps a panel in the absolute-overlay slot. Invisible (not unmounted) when
+ *  inactive so stateful panels (Monaco, streaming chat) retain their state. */
+function PanelSlot({ active, children }: { active: boolean; children: React.ReactNode }) {
+  return (
+    <div className={cn('absolute inset-0', !active && 'invisible pointer-events-none')}>
+      {children}
     </div>
   )
 }

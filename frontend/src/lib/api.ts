@@ -47,10 +47,57 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return r.json()
 }
 
+// ── Backend row shapes ─────────────────────────────────────────────────────
+// The backend emits snake_case from SQLite rows and camelCase from some
+// in-memory paths. Both variants are accepted here so the normalizers are
+// resilient to future backend refactors without silent runtime failures.
+
+interface ProjectRow {
+  id: string
+  user_id?: string;   userId?: string
+  name: string
+  spec?: string
+  phase?: string
+  network: string
+  workspace_dir?: string; workspaceDir?: string
+  created_at?: number;    createdAt?: number
+  updated_at?: number;    updatedAt?: number
+  contractCount?: number
+  app_name?: string;        appName?: string
+  app_description?: string; appDescription?: string
+  app_tags?: string;        appTags?: string
+  app_logo_url?: string;    appLogoUrl?: string
+  app_banner_url?: string;  appBannerUrl?: string
+  app_runtime_url?: string; appRuntimeUrl?: string
+  app_like_count?: number;  appLikeCount?: number
+  app_dislike_count?: number; appDislikeCount?: number
+  app_published_at?: number | null; appPublishedAt?: number | null
+}
+
+interface ContractRow {
+  id: string | number
+  contract_id?: string; contractId?: string
+  project_id?: string;  projectId?: string
+  session_id?: string;  sessionId?: string
+  user_id?: string;     userId?: string
+  network: string
+  wasm_path?: string | null;     wasmPath?: string | null
+  source_account?: string | null; sourceAccount?: string | null
+  contract_alias?: string | null; name?: string | null
+  deployed_at?: number;           deployedAt?: number
+}
+
+interface FileNodeRow {
+  name: string
+  path: string
+  isDirectory?: boolean
+  type?: string
+  children?: FileNodeRow[]
+}
+
 // ── Normalizers (snake_case DB rows → camelCase frontend types) ────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normalizeProject(p: any): Project {
+function normalizeProject(p: ProjectRow): Project {
   return {
     id: p.id,
     userId: p.user_id ?? p.userId ?? '',
@@ -74,10 +121,9 @@ function normalizeProject(p: any): Project {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normalizeContract(c: any): Contract {
+function normalizeContract(c: ContractRow): Contract {
   return {
-    id: c.id,
+    id: Number(c.id),
     contractId: c.contract_id ?? c.contractId ?? '',
     projectId: c.project_id ?? c.projectId ?? '',
     sessionId: c.session_id ?? c.sessionId ?? '',
@@ -91,8 +137,7 @@ function normalizeContract(c: any): Contract {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normalizeFileNode(n: any): FileNode {
+function normalizeFileNode(n: FileNodeRow): FileNode {
   return {
     name: n.name,
     path: n.path,
@@ -109,7 +154,7 @@ export const api = {
 
   // Projects
   getProjects: async (userId: string): Promise<Project[]> => {
-    const res = await get<{ projects: unknown[] }>(`/projects?userId=${encodeURIComponent(userId)}`)
+    const res = await get<{ projects: ProjectRow[] }>(`/projects?userId=${encodeURIComponent(userId)}`)
     return res.projects.map(normalizeProject)
   },
 
@@ -119,7 +164,7 @@ export const api = {
     description?: string
     network: 'testnet' | 'mainnet' | 'futurenet' | 'local'
   }): Promise<Project> => {
-    const res = await post<unknown>('/projects', body)
+    const res = await post<ProjectRow>('/projects', body)
     return normalizeProject(res)
   },
 
@@ -135,12 +180,12 @@ export const api = {
     appDislikeCount?: number
     appPublishedAt?: number | null
   }): Promise<Project> => {
-    const res = await patch<unknown>(`/projects/${id}`, body)
+    const res = await patch<ProjectRow>(`/projects/${id}`, body)
     return normalizeProject(res)
   },
 
   getProject: async (id: string): Promise<{ project: Project; contracts: Contract[] }> => {
-    const res = await get<{ project: unknown; contracts: unknown[] }>(`/projects/${id}`)
+    const res = await get<{ project: ProjectRow; contracts: ContractRow[] }>(`/projects/${id}`)
     return {
       project: normalizeProject(res.project),
       contracts: res.contracts.map(normalizeContract),
@@ -148,12 +193,12 @@ export const api = {
   },
 
   getContracts: async (projectId: string): Promise<Contract[]> => {
-    const res = await get<{ contracts: unknown[] }>(`/projects/${projectId}/contracts`)
+    const res = await get<{ contracts: ContractRow[] }>(`/projects/${projectId}/contracts`)
     return res.contracts.map(normalizeContract)
   },
 
   reactToApp: async (projectId: string, type: 'like' | 'dislike'): Promise<Project> => {
-    const res = await post<unknown>(`/projects/${projectId}/reaction`, { type })
+    const res = await post<ProjectRow>(`/projects/${projectId}/reaction`, { type })
     return normalizeProject(res)
   },
 
@@ -197,7 +242,7 @@ export const api = {
 
   // Workspace: files
   getFiles: async (projectId: string): Promise<FileNode[]> => {
-    const res = await get<{ files: unknown[] }>(`/workspace/${projectId}/files`)
+    const res = await get<{ files: FileNodeRow[] }>(`/workspace/${projectId}/files`)
     return res.files.map(normalizeFileNode)
   },
 
